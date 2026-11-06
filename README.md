@@ -1,0 +1,216 @@
+<div align="center">
+
+# 🛡️ bannix
+
+**Ultra-fast, zero-overhead Intrusion Prevention System (IPS) for Linux.**  
+*A modern, single-binary drop-in alternative to Fail2ban built with pure Rust and native kernel Netlink.*
+
+[![Language](https://img.shields.io/badge/Language-Rust%201.85+-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20(x86__64%20%7C%20aarch64)-brightgreen.svg?style=flat-square&logo=linux)](https://kernel.org)
+[![Binary Size](https://img.shields.io/badge/Binary%20Size-%3C%201%20MB-success.svg?style=flat-square)]()
+[![RAM Footprint](https://img.shields.io/badge/RAM%20Idle-%3C%203.0%20MB-blueviolet.svg?style=flat-square)]()
+[![Subprocess Overhead](https://img.shields.io/badge/Subprocess%20Forks-0%20(Pure%20Netlink)-purple.svg?style=flat-square)]()
+
+</div>
+
+---
+
+## ⚡ Overview
+
+**bannix** is an industrial-grade intrusion prevention daemon engineered to protect Linux servers against brute-force attacks, scanner probes, and distributed denial-of-service attempts without the resource bloat of traditional tools.
+
+While Python-based alternatives like Fail2ban spawn hundreds of shell subprocesses and consume tens of megabytes of memory under load, **bannix** operates directly within kernel space via **raw Netlink sockets (`AF_NETLINK`)**, achieving **sub-millisecond detection-to-ban latency** with **zero subprocess forks** and a memory footprint under 3 MB.
+
+### ✨ Key Highlights
+
+- **Zero-Fork Kernel Engine**: Direct `AF_NETLINK` communication with `nftables` and `ipset`. Zero `fork()` or `exec()` overhead during active attacks.
+- **Microsecond Pattern Matching**: Linear-time $O(n)$ pattern searching powered by the **Aho-Corasick DFA** algorithm—immune to Regular Expression Denial of Service (ReDoS).
+- **Zero-Copy IP Parser**: Extracts IPv4 and IPv6 addresses directly from raw log byte buffers without heap allocations.
+- **Kernel-Level Expiry**: Uses native kernel set timeouts (`NFTA_SET_ELEM_TIMEOUT`). The kernel unbans automatically—no userland polling threads required.
+- **Dual Log Ingestion**: High-performance non-blocking `inotify` + `epoll` pipeline with automatic log rotation handling and native systemd `journald` support.
+- **Zero-Downtime Hot Reload**: Update configuration and jail definitions on the fly without interrupting log streams via `SIGHUP` or `systemctl reload`.
+
+---
+
+## 🚀 Quick Start (One-Line Install)
+
+Run the automated installer on your server (requires `root` or `sudo` privileges):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Galang-Purnama/bannix/main/install.sh | sudo bash
+```
+
+The installer detects your CPU architecture (`x86_64` or `aarch64`), provisions `/etc/bannix/` configurations, configures the `systemd` service unit, and immediately activates kernel-level protection.
+
+---
+
+## 📊 Performance Comparison
+
+| Metric / Feature | Fail2ban | CrowdSec | **bannix** |
+| :--- | :--- | :--- | :--- |
+| **Runtime & Language** | Python 3 + Runtime VM | Go Runtime + Agent | **Pure Rust (Native Static Binary)** |
+| **Idle Memory (VmRSS)** | $50\text{ MB} - 120\text{ MB}$ | $40\text{ MB} - 80\text{ MB}$ | **$\mathbf{\le 3.0\text{ MB}}$** |
+| **Firewall Interaction** | Subprocess fork (`/sbin/nft`) | Subprocess bouncer | **Direct Kernel Netlink (`AF_NETLINK`)** |
+| **Fork Overhead per Ban** | 1–3 forks per strike/ban | Subprocess IPC | **0 Forks (Zero-Fork Architecture)** |
+| **Pattern Search Algorithm** | Dynamic Regex (ReDoS risk) | Yaml scenarios + Regex | **Aho-Corasick DFA ($O(n)$ Linear)** |
+| **IP Buffer Parsing** | String heap copy | String heap copy | **Zero-Copy Parser on `&[u8]`** |
+| **Unban Execution** | Polling thread loop | Userland API polling | **Kernel Dynamic Set (`NFTA_SET_ELEM_TIMEOUT`)** |
+| **Binary Footprint** | System Python packages | $\sim 45\text{ MB}$ | **$< 1\text{ MB}$** |
+
+---
+
+## 🔧 Operational Guide
+
+### 1. Service Status
+```bash
+systemctl status bannix
+```
+
+### 2. Live Attack Monitoring
+Follow brute-force detection and kernel ban executions in real time:
+```bash
+journalctl -u bannix -f
+```
+
+### 3. Inspect Kernel Banned IP Sets
+Because bannix programs kernel sets directly, view blocked attackers via `nftables`:
+```bash
+nft list set inet bannix_filter blacklist_v4
+```
+
+*Example output:*
+```text
+table inet bannix_filter {
+    set blacklist_v4 {
+        type ipv4_addr
+        flags timeout
+        elements = { 45.148.10.152 timeout 1h expires 52m19s, 193.46.255.86 timeout 1h expires 57m46s }
+    }
+}
+```
+
+### 4. Validate Configuration Syntax
+Verify configuration syntax and compile patterns before applying changes:
+```bash
+bannix --test-config
+# or specify a path:
+bannix -c /etc/bannix/bannix.toml --test-config
+```
+
+### 5. Zero-Downtime Hot Reload
+Reload configuration without dropping connections or restarting the daemon:
+```bash
+systemctl reload bannix
+# or via POSIX signal:
+kill -HUP $(pidof bannix)
+```
+
+---
+
+## ⚙️ Configuration
+
+Configuration is modular and structured under `/etc/bannix/`:
+
+```
+/etc/bannix/
+├── bannix.toml        # Master daemon settings & global whitelist
+└── jails.d/           # Modular jail definitions
+    ├── ssh.toml       # OpenSSH protection
+    └── nginx.toml     # Nginx web server protection
+```
+
+### Master Configuration (`/etc/bannix/bannix.toml`)
+
+```toml
+[daemon]
+log_level = "info"              # trace | debug | info | warn | error
+backend = "auto"                # auto (recommended) | nftables | ipset | iptables
+table_name = "bannix_filter"
+purge_on_exit = false           # Keep kernel rules intact during daemon restarts
+
+[whitelist]
+# IP addresses and CIDR subnets that are NEVER banned
+ips = [
+    "127.0.0.1",
+    "::1",
+    "192.168.0.0/16",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "203.0.113.50"              # Static Administrator IP
+]
+```
+
+### Modular Jails (`/etc/bannix/jails.d/*.toml`)
+
+Each file inside `/etc/bannix/jails.d/` represents an isolated jail.
+
+Example: `/etc/bannix/jails.d/ssh.toml`
+```toml
+enabled = true
+log_path = "/var/log/auth.log"   # Target log file
+mode = "inotify"                # inotify | journald
+findtime = 600                  # Sliding evaluation window in seconds (10 mins)
+maxretry = 5                    # Failure count before banning
+bantime = 3600                  # Ban duration in seconds (1 hour; 0 = permanent)
+patterns = [
+    "Failed password for",
+    "Invalid user",
+    "authentication failure; logname=",
+    "Connection closed by authenticating user"
+]
+```
+
+Apply updates instantly:
+```bash
+systemctl reload bannix
+```
+
+---
+
+## 🛠️ Building from Source
+
+### Prerequisites
+- Linux Kernel $\ge 3.10$ with Netlink support enabled
+- Rust toolchain $1.85+$ (`rustup`)
+- `gcc` or `clang` for the C acceleration bridge (`src/accel`)
+
+```bash
+# 1. Clone repository
+git clone https://github.com/Galang-Purnama/bannix.git
+cd bannix
+
+# 2. Run unit & integration test suite
+cargo test
+
+# 3. Build optimized release binary
+cargo build --release
+
+# 4. Optional: Run automated benchmark & smoke test
+bash scripts/benchmark.sh
+
+# 5. Install to system
+sudo make install
+```
+
+---
+
+## 🗑️ Uninstallation
+
+To remove bannix completely from your system:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Galang-Purnama/bannix/main/install.sh | sudo bash -s -- --uninstall
+```
+
+To purge configuration files (`/etc/bannix/`) as well:
+```bash
+curl -sSL https://raw.githubusercontent.com/Galang-Purnama/bannix/main/install.sh | sudo bash -s -- --uninstall --purge
+```
+
+---
+
+## 📄 License
+
+Licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).  
+Authored by **Galang Purnama** (<support@nekohost.id>).

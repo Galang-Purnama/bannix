@@ -1,0 +1,45 @@
+[daemon]
+log_level = "info"              # trace, debug, info, warn, error
+backend = "auto"                # auto | nftables | ipset | iptables (Auto-detects OpenVZ/LXC/Docker/KVM)
+table_name = "bannix_filter"
+purge_on_exit = false           # Pertahankan blokir saat service direstart
+
+[whitelist]
+# IP dan Subnet yang DILARANG KERAS diblokir (Localhost, Private LAN, Management IP)
+ips = [
+    "127.0.0.1",
+    "::1",
+    "192.168.0.0/16",
+    "10.0.0.0/8",
+    "172.16.0.0/12"
+]
+
+# ==============================================================================
+# Jails Configuration
+# ==============================================================================
+
+[jails.ssh]
+enabled = true
+log_path = "/var/log/auth.log"
+mode = "inotify"                # inotify | journald
+findtime = 600                  # 10 menit evaluasi
+maxretry = 5                    # 5 kali salah password langsung ban
+bantime = 3600                  # 1 jam ban (0 = permanen)
+patterns = [
+    "Failed password for",
+    "Invalid user",
+    "authentication failure; logname="
+]
+
+[jails.nginx]
+enabled = false
+log_path = "/var/log/nginx/error.log"
+mode = "inotify"
+findtime = 300
+maxretry = 10
+bantime = 1800                  # 30 menit ban
+patterns = [
+    "directory index of [^ ]* is forbidden",
+    "access forbidden by rule"
+]
+

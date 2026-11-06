@@ -1,0 +1,13 @@
+enabled = true
+log_path = "/var/log/auth.log"
+mode = "inotify"
+findtime = 600
+maxretry = 5
+bantime = 3600
+patterns = [
+    "Failed password for",
+    "Invalid user",
+    "authentication failure; logname=",
+    "Connection closed by authenticating user"
+]
+

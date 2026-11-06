@@ -1,0 +1,11 @@
+enabled = false
+log_path = "/var/log/nginx/error.log"
+mode = "inotify"
+findtime = 300
+maxretry = 10
+bantime = 1800
+patterns = [
+    "directory index of [^ ]* is forbidden",
+    "access forbidden by rule"
+]
+

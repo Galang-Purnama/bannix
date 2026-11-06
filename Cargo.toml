@@ -1,0 +1,35 @@
+[package]
+name = "bannix"
+version = "0.1.0"
+edition = "2021"
+authors = ["Galang Purnama <galangpurnama907@gmail.com>"]
+description = "Ultra-fast, zero-overhead Intrusion Prevention System in Rust"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "bannix"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bannix"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt", "time", "net", "io-util", "signal"], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+aho-corasick = "1.1"
+socket2 = "0.6"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }
+
+[build-dependencies]
+cc = "1.0"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

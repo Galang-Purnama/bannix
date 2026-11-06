@@ -1,0 +1,23 @@
+[Unit]
+Description=bannix - Ultra-Lightweight Intrusion Prevention Daemon
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bannix --config /etc/bannix/bannix.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/etc/bannix
+
+[Install]
+WantedBy=multi-user.target
+
