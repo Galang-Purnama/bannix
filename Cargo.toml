@@ -1,6 +1,6 @@
 [package]
 name = "bannix"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Galang Purnama <galangpurnama907@gmail.com>"]
 description = "Ultra-fast, zero-overhead Intrusion Prevention System in Rust"
