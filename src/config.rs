@@ -12,6 +12,8 @@ pub struct DaemonConfig {
     pub backend: String,
     #[serde(default = "default_table_name")]
     pub table_name: String,
+    #[serde(default = "default_socket_path")]
+    pub socket_path: String,
     #[serde(default)]
     pub purge_on_exit: bool,
 }
@@ -28,12 +30,17 @@ fn default_table_name() -> String {
     "bannix_filter".to_string()
 }
 
+fn default_socket_path() -> String {
+    "/run/bannix/bannix.sock".to_string()
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             log_level: default_log_level(),
             backend: default_backend(),
             table_name: default_table_name(),
+            socket_path: default_socket_path(),
             purge_on_exit: false,
         }
     }

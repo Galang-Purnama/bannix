@@ -186,6 +186,7 @@ if [[ ! -f "$CONF_DIR/bannix.toml" ]]; then
 log_level = "info"              # trace, debug, info, warn, error
 backend = "auto"                # auto | nftables | ipset | iptables
 table_name = "bannix_filter"
+socket_path = "/run/bannix/bannix.sock"
 purge_on_exit = false           # Pertahankan blokir saat service direstart
 
 [whitelist]
@@ -304,6 +305,7 @@ ExecStart=/usr/local/bin/bannix --config /etc/bannix/bannix.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=3
+RuntimeDirectory=bannix
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 ProtectSystem=strict

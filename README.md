@@ -62,18 +62,40 @@ The installer detects your CPU architecture (`x86_64` or `aarch64`), provisions 
 
 ## 🔧 Operational Guide
 
-### 1. Service Status
+### 1. Service & Daemon Status
+Check daemon health, uptime, and active jails via IPC socket:
 ```bash
-systemctl status bannix
+bannix status
+```
+*Example output:*
+```text
+bannix daemon v0.1.0
+Uptime: 1420s
+Backend: nftables (Netlink) (table: bannix_filter)
+Whitelisted: 6 entries
+Active Jails (2):
+  • ssh        | log: /var/log/auth.log       | mode: inotify | retry: 5/600s | ban: 3600s
+  • nginx      | log: /var/log/nginx/error.log| mode: inotify | retry: 10/300s| ban: 1800s
 ```
 
-### 2. Live Attack Monitoring
+### 2. Manual Unban & Ban via CLI
+Unban an IP immediately from the kernel firewall without restarting the daemon:
+```bash
+bannix unban 192.168.1.50
+```
+
+Manually ban an attacker for a custom duration (default: 3600s):
+```bash
+bannix ban 203.0.113.99 7200
+```
+
+### 3. Live Attack Monitoring
 Follow brute-force detection and kernel ban executions in real time:
 ```bash
 journalctl -u bannix -f
 ```
 
-### 3. Inspect Kernel Banned IP Sets
+### 4. Inspect Kernel Banned IP Sets
 Because bannix programs kernel sets directly, view blocked attackers via `nftables`:
 ```bash
 nft list set inet bannix_filter blacklist_v4
@@ -90,7 +112,7 @@ table inet bannix_filter {
 }
 ```
 
-### 4. Validate Configuration Syntax
+### 5. Validate Configuration Syntax
 Verify configuration syntax and compile patterns before applying changes:
 ```bash
 bannix --test-config
@@ -98,7 +120,7 @@ bannix --test-config
 bannix -c /etc/bannix/bannix.toml --test-config
 ```
 
-### 5. Zero-Downtime Hot Reload
+### 6. Zero-Downtime Hot Reload
 Reload configuration without dropping connections or restarting the daemon:
 ```bash
 systemctl reload bannix

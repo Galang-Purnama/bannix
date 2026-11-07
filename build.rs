@@ -3,10 +3,16 @@ fn main() {
     println!("cargo:rerun-if-changed=src/accel/fast_ip.h");
     println!("cargo:rerun-if-changed=src/accel/netlink_raw.c");
     println!("cargo:rerun-if-changed=src/accel/netlink_raw.h");
+    println!("cargo:rerun-if-changed=src/accel/kernel_probe.c");
+    println!("cargo:rerun-if-changed=src/accel/kernel_probe.h");
+    println!("cargo:rerun-if-changed=src/accel/raw_socket.c");
+    println!("cargo:rerun-if-changed=src/accel/raw_socket.h");
 
     cc::Build::new()
         .file("src/accel/fast_ip.c")
         .file("src/accel/netlink_raw.c")
+        .file("src/accel/kernel_probe.c")
+        .file("src/accel/raw_socket.c")
         .include("src/accel")
         .opt_level(3)
         .compile("bannix_c");

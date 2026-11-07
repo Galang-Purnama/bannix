@@ -41,6 +41,22 @@ extern "C" {
         table_name: *const libc::c_char,
         seq: *mut u32,
     ) -> libc::c_int;
+
+    // Kernel probe declarations
+    pub fn c_kernel_get_version(buf: *mut libc::c_char, max_len: libc::size_t) -> libc::c_int;
+    pub fn c_kernel_detect_environment() -> libc::c_int;
+    pub fn c_kernel_has_net_admin() -> libc::c_int;
+    pub fn c_kernel_probe_nftables_support() -> libc::c_int;
+
+    // Raw socket declarations
+    pub fn c_socket_tune_buffers(
+        fd: libc::c_int,
+        rcvbuf_bytes: libc::c_int,
+        sndbuf_bytes: libc::c_int,
+    ) -> libc::c_int;
+    pub fn c_socket_set_nonblocking(fd: libc::c_int) -> libc::c_int;
+    pub fn c_net_get_ifindex(ifname: *const libc::c_char) -> libc::c_int;
+    pub fn c_net_is_iface_up(ifname: *const libc::c_char) -> libc::c_int;
 }
 
 /// Safe Rust wrapper for C fast_ip parser.
@@ -167,6 +183,67 @@ impl Drop for RawNetlinkBridge {
     }
 }
 
+/// Safe Rust wrapper for C kernel environment prober.
+pub struct KernelProbeBridge;
+
+impl KernelProbeBridge {
+    pub fn get_kernel_release() -> Option<String> {
+        let mut buf = [0u8; 128];
+        let ret = unsafe {
+            c_kernel_get_version(buf.as_mut_ptr() as *mut libc::c_char, buf.len())
+        };
+        if ret == 0 {
+            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            String::from_utf8(buf[..len].to_vec()).ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn detect_environment() -> i32 {
+        unsafe { c_kernel_detect_environment() }
+    }
+
+    pub fn has_net_admin() -> bool {
+        unsafe { c_kernel_has_net_admin() == 1 }
+    }
+
+    pub fn probe_nftables_support() -> bool {
+        unsafe { c_kernel_probe_nftables_support() == 1 }
+    }
+}
+
+/// Safe Rust wrapper for C raw socket & network interface helpers.
+pub struct RawSocketBridge;
+
+impl RawSocketBridge {
+    pub fn tune_socket_buffers(fd: i32, rcvbuf: i32, sndbuf: i32) -> bool {
+        unsafe { c_socket_tune_buffers(fd, rcvbuf, sndbuf) == 0 }
+    }
+
+    pub fn set_nonblocking(fd: i32) -> bool {
+        unsafe { c_socket_set_nonblocking(fd) == 0 }
+    }
+
+    pub fn get_ifindex(ifname: &str) -> Option<i32> {
+        let c_name = CString::new(ifname).ok()?;
+        let ret = unsafe { c_net_get_ifindex(c_name.as_ptr()) };
+        if ret > 0 {
+            Some(ret)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_iface_up(ifname: &str) -> bool {
+        let c_name = match CString::new(ifname) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        unsafe { c_net_is_iface_up(c_name.as_ptr()) == 1 }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +269,32 @@ mod tests {
     fn test_c_netlink_is_supported_probe() {
         let supported = RawNetlinkBridge::is_supported();
         println!("C Netlink supported on this kernel: {}", supported);
+    }
+
+    #[test]
+    fn test_c_kernel_probe() {
+        let release = KernelProbeBridge::get_kernel_release().expect("kernel release");
+        assert!(!release.is_empty(), "Kernel release should not be empty");
+        println!("Kernel release: {}", release);
+
+        let env_type = KernelProbeBridge::detect_environment();
+        println!("Environment type: {}", env_type);
+        assert!(env_type >= 0);
+
+        let has_admin = KernelProbeBridge::has_net_admin();
+        println!("Has CAP_NET_ADMIN: {}", has_admin);
+    }
+
+    #[test]
+    fn test_c_raw_socket_helpers() {
+        let lo_idx = RawSocketBridge::get_ifindex("lo");
+        assert!(lo_idx.is_some(), "Loopback interface 'lo' should exist");
+
+        let lo_up = RawSocketBridge::is_iface_up("lo");
+        assert!(lo_up, "Loopback interface 'lo' should be UP");
+
+        assert!(RawSocketBridge::get_ifindex("nonexistent_if_xyz").is_none());
+        assert!(!RawSocketBridge::is_iface_up("nonexistent_if_xyz"));
     }
 }
 

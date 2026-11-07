@@ -19,12 +19,31 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut config_path = PathBuf::from("config/bannix.toml");
+    let mut custom_socket: Option<String> = None;
     let mut dry_run = false;
     let mut test_config_only = false;
+    let mut subcommand: Option<String> = None;
+    let mut sub_args: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "status" | "ping" => {
+                subcommand = Some(args[i].clone());
+            }
+            "unban" | "ban" => {
+                subcommand = Some(args[i].clone());
+                while i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    sub_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            "-s" | "--socket" => {
+                if i + 1 < args.len() {
+                    custom_socket = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
             "-c" | "--config" => {
                 if i + 1 < args.len() {
                     config_path = PathBuf::from(&args[i + 1]);
@@ -46,12 +65,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             unknown => {
-                eprintln!("Unknown option: {}", unknown);
+                eprintln!("Unknown option or command: {}", unknown);
                 print_help();
                 std::process::exit(1);
             }
         }
         i += 1;
+    }
+
+    // Handle CLI Subcommands via IPC socket
+    if let Some(cmd) = subcommand {
+        let sock_path = match bannix::ipc::find_socket_path(custom_socket.as_deref()) {
+            Some(p) => p,
+            None => {
+                eprintln!("Error: Cannot connect to bannix daemon. No active socket found.");
+                eprintln!("Is bannix daemon running? (checked: {})", bannix::ipc::FALLBACK_SOCKETS.join(", "));
+                std::process::exit(1);
+            }
+        };
+
+        let request = match cmd.as_str() {
+            "status" => "STATUS".to_string(),
+            "ping" => "PING".to_string(),
+            "unban" => {
+                if sub_args.is_empty() {
+                    eprintln!("Error: Missing IP address to unban.");
+                    eprintln!("Usage: bannix unban <IP>");
+                    std::process::exit(1);
+                }
+                format!("UNBAN {}", sub_args[0])
+            }
+            "ban" => {
+                if sub_args.is_empty() {
+                    eprintln!("Error: Missing IP address to ban.");
+                    eprintln!("Usage: bannix ban <IP> [SECONDS]");
+                    std::process::exit(1);
+                }
+                let timeout = sub_args.get(1).map(|s| s.as_str()).unwrap_or("3600");
+                format!("BAN {} {}", sub_args[0], timeout)
+            }
+            _ => unreachable!(),
+        };
+
+        match bannix::ipc::send_command(&sock_path, &request).await {
+            Ok(resp) => {
+                print!("{}", resp);
+                if resp.starts_with("ERROR:") {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Error communicating with daemon at {:?}: {}", sock_path, e);
+                std::process::exit(1);
+            }
+        }
     }
 
     if !config_path.exists() && PathBuf::from("/etc/bannix/bannix.toml").exists() {
@@ -128,6 +196,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("All active jails launched (total: {}). Daemon listening for attacks.", active_jails);
     }
 
+    // Start IPC Control Socket Server
+    let socket_path = bannix::ipc::resolve_socket_path(&cfg_arc.read().unwrap().daemon.socket_path);
+    let start_time = std::time::Instant::now();
+    let socket_path_cloned = socket_path.clone();
+    let cfg_ipc = Arc::clone(&cfg_arc);
+    let fw_ipc = Arc::clone(&firewall_arc);
+
+    tokio::spawn(async move {
+        if let Err(e) = bannix::ipc::run_ipc_server(socket_path_cloned, cfg_ipc, fw_ipc, start_time).await {
+            error!("Failed to run IPC server: {}", e);
+        }
+    });
+
     // Unix Signals: SIGINT, SIGTERM, SIGHUP
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sighup = signal(SignalKind::hangup())?;
@@ -158,6 +239,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Cleanup IPC socket
+    let _ = std::fs::remove_file(&socket_path);
+
     // Cleanup on exit if configured
     let purge_on_exit = cfg_arc.read().unwrap().daemon.purge_on_exit;
     if purge_on_exit && !dry_run {
@@ -174,10 +258,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn print_help() {
     println!("bannix v{} - Ultra-Lightweight Intrusion Prevention System", VERSION);
-    println!("Usage: bannix [OPTIONS]");
+    println!("Usage: bannix [COMMAND] [OPTIONS]");
+    println!();
+    println!("Commands:");
+    println!("  status               Show daemon status, uptime, backend, and active jails");
+    println!("  unban <IP>           Manually unban an IP from kernel firewall");
+    println!("  ban <IP> [SECONDS]   Manually ban an IP (default: 3600 seconds)");
+    println!("  ping                 Test connectivity to running bannix daemon");
     println!();
     println!("Options:");
     println!("  -c, --config <PATH>  Path to configuration file (default: config/bannix.toml)");
+    println!("  -s, --socket <PATH>  Path to IPC control socket (default: /run/bannix/bannix.sock)");
     println!("      --dry-run        Simulate attacks and rate-limiting without modifying kernel firewall");
     println!("      --test-config    Validate syntax and semantics of configuration and exit");
     println!("  -v, --version        Show version information");

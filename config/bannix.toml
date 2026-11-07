@@ -2,6 +2,7 @@
 log_level = "info"              # trace, debug, info, warn, error
 backend = "auto"                # auto | nftables | ipset | iptables (Auto-detects OpenVZ/LXC/Docker/KVM)
 table_name = "bannix_filter"
+socket_path = "/run/bannix/bannix.sock" # IPC control socket path
 purge_on_exit = false           # Pertahankan blokir saat service direstart
 
 [whitelist]

@@ -30,6 +30,7 @@ cat <<EOF > "$CONF"
 log_level = "info"
 backend = "auto"
 table_name = "bannix_bench_filter"
+socket_path = "$BENCH_DIR/bannix.sock"
 purge_on_exit = true
 
 [whitelist]
@@ -145,21 +146,34 @@ else
     exit 1
 fi
 
-# 5. Measure Peak Memory & CPU Footprint
+# 5. IPC Control Socket Verification
+echo "----------------------------------------------------------"
+echo "4. IPC SOCKET VERIFICATION (status & unban)"
+$BIN --socket "$BENCH_DIR/bannix.sock" status
+$BIN --socket "$BENCH_DIR/bannix.sock" unban "$TARGET_ATTACKER_IP"
+if nft list set inet bannix_bench_filter blacklist_v4 2>/dev/null | grep -q "$TARGET_ATTACKER_IP"; then
+    echo "❌ FAILED: Attacker was still in kernel set after manual unban!"
+    kill -TERM $PID
+    exit 1
+else
+    echo "✓ PASSED: Attacker successfully unbanned via IPC socket!"
+fi
+
+# 6. Measure Peak Memory & CPU Footprint
 ACTIVE_RSS_KB=$(grep VmRSS /proc/$PID/status | awk '{print $2}')
 ACTIVE_RSS_MB=$(echo "scale=2; $ACTIVE_RSS_KB / 1024" | bc)
 CPU_USAGE=$(ps -p $PID -o %cpu | tail -n 1 | tr -d ' ')
 
 echo "----------------------------------------------------------"
-echo "4. ACTIVE RESOURCE FOOTPRINT"
+echo "5. ACTIVE RESOURCE FOOTPRINT"
 echo "   Active RAM (VmRSS): ${ACTIVE_RSS_MB} MB (${ACTIVE_RSS_KB} KB)"
 echo "   CPU Utilization   : ${CPU_USAGE}%"
 echo "   Target RAM Budget : ≤ 3.50 MB"
 echo "   Target CPU Usage  : ≤ 0.05%"
 
-# 6. Graceful Shutdown & Cleanup
+# 7. Graceful Shutdown & Cleanup
 echo "----------------------------------------------------------"
-echo "5. GRACEFUL SHUTDOWN & KERNEL PURGE"
+echo "6. GRACEFUL SHUTDOWN & KERNEL PURGE"
 kill -TERM $PID
 wait $PID 2>/dev/null || true
 
