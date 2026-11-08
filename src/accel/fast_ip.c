@@ -116,12 +116,19 @@ int fast_ip_extract(const uint8_t *buf, size_t len, uint8_t *out_is_v6, uint8_t 
     const size_t num_prefixes = sizeof(prefixes) / sizeof(prefixes[0]);
 
     // Priority 1: Prefix search
+    ssize_t best_offset = -1;
+    uint8_t best_is_v6 = 0;
+    uint8_t best_ip[16];
+
     for (size_t p = 0; p < num_prefixes; p++) {
         const char *needle = prefixes[p].prefix;
         size_t nlen = prefixes[p].len;
         if (len < nlen) continue;
 
-        for (size_t i = 0; i <= len - nlen; i++) {
+        for (ssize_t i = (ssize_t)(len - nlen); i >= 0; i--) {
+            if (i <= best_offset) {
+                break;
+            }
             if (memcmp(buf + i, needle, nlen) == 0) {
                 const uint8_t *start = buf + i + nlen;
                 while (start < buf + len && (*start == ' ' || *start == '\t')) {
@@ -132,11 +139,22 @@ int fast_ip_extract(const uint8_t *buf, size_t len, uint8_t *out_is_v6, uint8_t 
                     end++;
                 }
                 size_t token_len = (size_t)(end - start);
-                if (try_parse_ip_token(start, token_len, out_is_v6, out_ip_bytes) == 0) {
-                    return 0;
+                uint8_t candidate_v6 = 0;
+                uint8_t candidate_ip[16];
+                if (try_parse_ip_token(start, token_len, &candidate_v6, candidate_ip) == 0) {
+                    best_offset = i;
+                    best_is_v6 = candidate_v6;
+                    memcpy(best_ip, candidate_ip, 16);
+                    break;
                 }
             }
         }
+    }
+
+    if (best_offset >= 0) {
+        *out_is_v6 = best_is_v6;
+        memcpy(out_ip_bytes, best_ip, best_is_v6 ? 16 : 4);
+        return 0;
     }
 
     // Priority 2: Reverse token scan
