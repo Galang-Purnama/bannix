@@ -44,6 +44,10 @@ fn test_openssh_real_log_variations() {
     // Case 7: Legitimate SSH login (should NOT match)
     let log7 = b"Nov  5 14:22:56 server sshd[12350]: Accepted publickey for root from 192.168.1.1 port 55555 ssh2";
     assert!(!matcher.is_match(log7));
+
+    let log8 = b"Nov  5 14:22:57 server sshd[12351]: Failed password for invalid user from 1.1.1.1 from 203.0.113.199 port 54321 ssh2";
+    assert!(matcher.is_match(log8));
+    assert_eq!(IpParser::extract_ip_from_bytes(log8), Some("203.0.113.199".parse().unwrap()));
 }
 
 #[test]

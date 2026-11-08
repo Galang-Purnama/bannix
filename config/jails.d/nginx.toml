@@ -5,7 +5,7 @@ findtime = 300
 maxretry = 10
 bantime = 1800
 patterns = [
-    "directory index of [^ ]* is forbidden",
+    "directory index of",
     "access forbidden by rule"
 ]
 

@@ -22,13 +22,34 @@ impl IpParser {
             b"src=",
         ];
 
+        let mut best: Option<(usize, IpAddr)> = None;
+
         for &prefix in PREFIXES {
-            if let Some(pos) = Self::find_subslice(line, prefix) {
-                let after = &line[pos + prefix.len()..];
-                if let Some(ip) = Self::extract_first_ip_token_bytes(after) {
-                    return Some(ip);
+            if prefix.is_empty() || line.len() < prefix.len() {
+                continue;
+            }
+            let mut search_len = line.len();
+            while search_len >= prefix.len() {
+                if let Some(pos) = line[..search_len].windows(prefix.len()).rposition(|w| w == prefix) {
+                    let after = &line[pos + prefix.len()..];
+                    if let Some(ip) = Self::extract_first_ip_token_bytes(after) {
+                        if best.as_ref().map_or(true, |(best_pos, _)| pos > *best_pos) {
+                            best = Some((pos, ip));
+                        }
+                        break;
+                    }
+                    if pos == 0 {
+                        break;
+                    }
+                    search_len = pos;
+                } else {
+                    break;
                 }
             }
+        }
+
+        if let Some((_, ip)) = best {
+            return Some(ip);
         }
 
         // Priority 2: Scan tokens from right to left (IP addresses usually reside at the end of logs)
@@ -46,14 +67,6 @@ impl IpParser {
     #[inline]
     pub fn extract_ip(line: &str) -> Option<IpAddr> {
         Self::extract_ip_from_bytes(line.as_bytes())
-    }
-
-    #[inline]
-    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        if needle.is_empty() || haystack.len() < needle.len() {
-            return None;
-        }
-        haystack.windows(needle.len()).position(|window| window == needle)
     }
 
     fn extract_first_ip_token_bytes(slice: &[u8]) -> Option<IpAddr> {
@@ -230,5 +243,11 @@ mod tests {
     fn test_extract_from_byte_slice() {
         let line = b"Nov  5 14:22:50 host sshd[12345]: Failed password for root from 192.168.1.100 port 45222 ssh2";
         assert_eq!(IpParser::extract_ip_from_bytes(line), Some("192.168.1.100".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_extract_ssh_log_injection() {
+        let line = b"Nov  5 14:22:50 server sshd[12345]: Failed password for invalid user from 1.1.1.1 from 203.0.113.199 port 54321 ssh2";
+        assert_eq!(IpParser::extract_ip_from_bytes(line), Some("203.0.113.199".parse().unwrap()));
     }
 }
