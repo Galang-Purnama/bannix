@@ -1,6 +1,6 @@
-use std::net::IpAddr;
 use crate::engine::matcher::PatternMatcher;
 use crate::engine::parser::IpParser;
+use std::net::IpAddr;
 
 pub mod inotify;
 pub mod journal;

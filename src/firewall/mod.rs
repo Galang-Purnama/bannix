@@ -22,6 +22,9 @@ pub trait FirewallBackend: Send + Sync {
 
     /// Returns human-readable name of the backend.
     fn name(&self) -> &'static str;
+
+    /// Lists currently banned IP addresses with optional remaining seconds.
+    fn list_banned(&self) -> Vec<(IpAddr, Option<u64>)>;
 }
 
 /// Auto-detects the best available firewall backend in order:

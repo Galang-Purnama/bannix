@@ -1,6 +1,6 @@
+use super::FirewallBackend;
 use std::io;
 use std::net::IpAddr;
-use super::FirewallBackend;
 
 // Netlink & Netfilter Subsystem Constants
 const NETLINK_NETFILTER: i32 = 12;
@@ -78,6 +78,7 @@ pub struct NetlinkBackend {
     sock_fd: Option<i32>,
     seq: u32,
     initialized: bool,
+    fallback_tracker: std::collections::HashMap<IpAddr, Option<u64>>,
 }
 
 impl NetlinkBackend {
@@ -90,6 +91,7 @@ impl NetlinkBackend {
             sock_fd: None,
             seq: 1,
             initialized: false,
+            fallback_tracker: std::collections::HashMap::new(),
         }
     }
 
@@ -165,14 +167,7 @@ impl NetlinkBackend {
             &[],
         );
 
-        let sent = unsafe {
-            libc::send(
-                fd,
-                batch.as_ptr() as *const libc::c_void,
-                batch.len(),
-                0,
-            )
-        };
+        let sent = unsafe { libc::send(fd, batch.as_ptr() as *const libc::c_void, batch.len(), 0) };
 
         if sent < 0 {
             return Err(io::Error::last_os_error());
@@ -337,7 +332,7 @@ impl FirewallBackend for NetlinkBackend {
         Self::append_nla_str(&mut expr_meta4, 1, "meta");
         let mut meta_data4 = Vec::new();
         Self::append_nla_u32(&mut meta_data4, 2, 15); // NFTA_META_KEY = 15 (NFT_META_NFPROTO)
-        Self::append_nla_u32(&mut meta_data4, 1, 1);  // NFTA_META_DREG = 1 (NFT_REG_1)
+        Self::append_nla_u32(&mut meta_data4, 1, 1); // NFTA_META_DREG = 1 (NFT_REG_1)
         Self::append_nla_nested(&mut expr_meta4, 2, &meta_data4);
 
         let mut expr_cmp4 = Vec::new();
@@ -353,10 +348,10 @@ impl FirewallBackend for NetlinkBackend {
         let mut expr_payload4 = Vec::new();
         Self::append_nla_str(&mut expr_payload4, 1, "payload");
         let mut payload_data4 = Vec::new();
-        Self::append_nla_u32(&mut payload_data4, 1, 1);  // DREG = 1
-        Self::append_nla_u32(&mut payload_data4, 2, 1);  // BASE = NETWORK_HEADER (1)
+        Self::append_nla_u32(&mut payload_data4, 1, 1); // DREG = 1
+        Self::append_nla_u32(&mut payload_data4, 2, 1); // BASE = NETWORK_HEADER (1)
         Self::append_nla_u32(&mut payload_data4, 3, 12); // OFFSET = 12 (IPv4 saddr)
-        Self::append_nla_u32(&mut payload_data4, 4, 4);  // LEN = 4
+        Self::append_nla_u32(&mut payload_data4, 4, 4); // LEN = 4
         Self::append_nla_nested(&mut expr_payload4, 2, &payload_data4);
 
         let mut expr_lookup4 = Vec::new();
@@ -507,6 +502,14 @@ impl FirewallBackend for NetlinkBackend {
         );
 
         self.send_batch(&msg_buf)?;
+        self.fallback_tracker.insert(
+            ip,
+            if timeout_secs > 0 {
+                Some(timeout_secs)
+            } else {
+                None
+            },
+        );
         Ok(())
     }
 
@@ -544,6 +547,7 @@ impl FirewallBackend for NetlinkBackend {
         );
 
         self.send_batch(&msg_buf)?;
+        self.fallback_tracker.remove(&ip);
         Ok(())
     }
 
@@ -565,6 +569,7 @@ impl FirewallBackend for NetlinkBackend {
         );
 
         self.send_batch(&msg_buf)?;
+        self.fallback_tracker.clear();
         self.initialized = false;
         Ok(())
     }
@@ -572,4 +577,67 @@ impl FirewallBackend for NetlinkBackend {
     fn name(&self) -> &'static str {
         "nftables (Netlink)"
     }
+
+    fn list_banned(&self) -> Vec<(IpAddr, Option<u64>)> {
+        let mut results = Vec::new();
+        let mut nft_success = false;
+
+        for set in [&self.set_v4, &self.set_v6] {
+            if let Ok(output) = std::process::Command::new("nft")
+                .args(["-j", "list", "set", "inet", &self.table_name, set])
+                .output()
+            {
+                if output.status.success() {
+                    nft_success = true;
+                    if let Ok(json) = std::str::from_utf8(&output.stdout) {
+                        results.extend(parse_nft_json_elements(json));
+                    }
+                }
+            }
+        }
+
+        if nft_success {
+            results
+        } else {
+            self.fallback_tracker
+                .iter()
+                .map(|(ip, t)| (*ip, *t))
+                .collect()
+        }
+    }
+}
+
+pub fn parse_nft_json_elements(json: &str) -> Vec<(IpAddr, Option<u64>)> {
+    let mut results = Vec::new();
+    let mut pos = 0;
+    while let Some(val_idx) = json[pos..].find("\"val\":") {
+        let actual_val_idx = pos + val_idx + 6;
+        let rest = &json[actual_val_idx..];
+        if let Some(start_q) = rest.find('"') {
+            let after_q = &rest[start_q + 1..];
+            if let Some(end_q) = after_q.find('"') {
+                let ip_str = &after_q[..end_q];
+                if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                    let slice_len = (end_q + 120).min(after_q.len());
+                    let context = &after_q[..slice_len];
+
+                    let mut expires = None;
+                    if let Some(e_idx) = context.find("\"expires\":") {
+                        let num_str: String = context[e_idx + 10..]
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        if let Ok(e) = num_str.parse::<u64>() {
+                            expires = Some(e);
+                        }
+                    }
+
+                    results.push((ip, expires));
+                }
+            }
+        }
+        pos = actual_val_idx + 1;
+    }
+    results
 }

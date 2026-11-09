@@ -48,7 +48,10 @@ impl InotifyWatcher {
         self.close_current();
 
         if !self.file_path.exists() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Log file does not exist yet"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Log file does not exist yet",
+            ));
         }
 
         let c_path = CString::new(self.file_path.to_string_lossy().as_bytes())
@@ -133,7 +136,11 @@ impl InotifyWatcher {
 
     /// Polls for incoming log lines and delivers them as borrowed byte slices to `callback`.
     /// Zero heap allocation per line.
-    pub fn poll_next_lines<F>(&mut self, timeout_ms: i32, mut callback: F) -> Result<usize, io::Error>
+    pub fn poll_next_lines<F>(
+        &mut self,
+        timeout_ms: i32,
+        mut callback: F,
+    ) -> Result<usize, io::Error>
     where
         F: FnMut(&[u8]),
     {
@@ -191,9 +198,8 @@ impl InotifyWatcher {
             let n_read = n as usize;
 
             while offset + std::mem::size_of::<libc::inotify_event>() <= n_read {
-                let event_ptr = unsafe {
-                    &*(inotify_buf[offset..].as_ptr() as *const libc::inotify_event)
-                };
+                let event_ptr =
+                    unsafe { &*(inotify_buf[offset..].as_ptr() as *const libc::inotify_event) };
 
                 let mask = event_ptr.mask;
                 offset += std::mem::size_of::<libc::inotify_event>() + event_ptr.len as usize;

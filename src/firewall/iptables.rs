@@ -1,6 +1,6 @@
+use super::FirewallBackend;
 use std::collections::HashSet;
 use std::net::IpAddr;
-use super::FirewallBackend;
 
 #[allow(dead_code)]
 pub struct IptablesBackend {
@@ -52,5 +52,9 @@ impl FirewallBackend for IptablesBackend {
 
     fn name(&self) -> &'static str {
         "iptables"
+    }
+
+    fn list_banned(&self) -> Vec<(IpAddr, Option<u64>)> {
+        self.banned_ips.iter().map(|ip| (*ip, None)).collect()
     }
 }

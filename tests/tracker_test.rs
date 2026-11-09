@@ -86,13 +86,25 @@ fn test_cidr_whitelist_protection() {
     let lan1: IpAddr = "10.254.1.2".parse().unwrap();
     let lan2: IpAddr = "192.168.1.100".parse().unwrap();
     let lan3: IpAddr = "172.20.5.1".parse().unwrap();
-    assert_eq!(tracker.evaluate_strike(lan1, 1000, check_whitelist), StrikeResult::Whitelisted);
-    assert_eq!(tracker.evaluate_strike(lan2, 1000, check_whitelist), StrikeResult::Whitelisted);
-    assert_eq!(tracker.evaluate_strike(lan3, 1000, check_whitelist), StrikeResult::Whitelisted);
+    assert_eq!(
+        tracker.evaluate_strike(lan1, 1000, check_whitelist),
+        StrikeResult::Whitelisted
+    );
+    assert_eq!(
+        tracker.evaluate_strike(lan2, 1000, check_whitelist),
+        StrikeResult::Whitelisted
+    );
+    assert_eq!(
+        tracker.evaluate_strike(lan3, 1000, check_whitelist),
+        StrikeResult::Whitelisted
+    );
 
     // 3. Custom management IP
     let admin_ip: IpAddr = "203.0.113.50".parse().unwrap();
-    assert_eq!(tracker.evaluate_strike(admin_ip, 1000, check_whitelist), StrikeResult::Whitelisted);
+    assert_eq!(
+        tracker.evaluate_strike(admin_ip, 1000, check_whitelist),
+        StrikeResult::Whitelisted
+    );
 
     // Ensure none of the whitelisted IPs were recorded in the tracker history
     assert_eq!(tracker.get_strikes(&localhost_v4), None);
@@ -110,4 +122,3 @@ fn test_cidr_whitelist_protection() {
         StrikeResult::BanTriggered { strikes: 2 }
     );
 }
-

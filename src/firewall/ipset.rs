@@ -1,7 +1,7 @@
+use super::FirewallBackend;
 use std::collections::HashSet;
 use std::io;
 use std::net::IpAddr;
-use super::FirewallBackend;
 
 // Netlink ipset subsystem constants
 const NETLINK_NETFILTER: i32 = 12;
@@ -141,14 +141,7 @@ impl IpsetBackend {
         // payload
         buf.extend_from_slice(payload);
 
-        let sent = unsafe {
-            libc::send(
-                fd,
-                buf.as_ptr() as *const libc::c_void,
-                buf.len(),
-                0,
-            )
-        };
+        let sent = unsafe { libc::send(fd, buf.as_ptr() as *const libc::c_void, buf.len(), 0) };
 
         if sent < 0 {
             return Err(io::Error::last_os_error());
@@ -182,7 +175,11 @@ impl FirewallBackend for IpsetBackend {
         Self::append_nla(&mut create_payload, IPSET_ATTR_FAMILY, &[NFPROTO_IPV4]);
 
         // Attempt netlink creation; if netlink is unavailable, maintain in-memory fallback
-        let _ = self.send_ipset_cmd(IPSET_CMD_CREATE, NLM_F_REQUEST | NLM_F_CREATE, &create_payload);
+        let _ = self.send_ipset_cmd(
+            IPSET_CMD_CREATE,
+            NLM_F_REQUEST | NLM_F_CREATE,
+            &create_payload,
+        );
 
         self.initialized = true;
         Ok(())
@@ -259,5 +256,9 @@ impl FirewallBackend for IpsetBackend {
 
     fn name(&self) -> &'static str {
         "ipset"
+    }
+
+    fn list_banned(&self) -> Vec<(IpAddr, Option<u64>)> {
+        self.fallback_tracker.iter().map(|ip| (*ip, None)).collect()
     }
 }

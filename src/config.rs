@@ -1,8 +1,8 @@
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
-use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DaemonConfig {
@@ -131,7 +131,10 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn load_jails_d<P: AsRef<Path>>(&mut self, dir_path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load_jails_d<P: AsRef<Path>>(
+        &mut self,
+        dir_path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let entries = fs::read_dir(dir_path)?;
         for entry in entries.flatten() {
             let path = entry.path();
@@ -141,10 +144,16 @@ impl AppConfig {
                     // Try parsing as flat JailConfig
                     if let Ok(jail) = toml::from_str::<JailConfig>(&content) {
                         self.jails.insert(stem.to_string(), jail);
-                    } else if let Ok(wrapped) = toml::from_str::<HashMap<String, JailConfig>>(&content) {
+                    } else if let Ok(wrapped) =
+                        toml::from_str::<HashMap<String, JailConfig>>(&content)
+                    {
                         // Support [stem] or [jail] sections
                         for (k, v) in wrapped {
-                            let jail_name = if k == "jail" || k == stem { stem.to_string() } else { k };
+                            let jail_name = if k == "jail" || k == stem {
+                                stem.to_string()
+                            } else {
+                                k
+                            };
                             self.jails.insert(jail_name, v);
                         }
                     } else if let Ok(nested) = toml::from_str::<AppConfig>(&content) {
@@ -184,7 +193,9 @@ impl AppConfig {
                     }
                 }
             } else if let Some((cidr_ip, prefix_len)) = trimmed.split_once('/') {
-                if let (Ok(net_ip), Ok(bits)) = (cidr_ip.parse::<IpAddr>(), prefix_len.parse::<u8>()) {
+                if let (Ok(net_ip), Ok(bits)) =
+                    (cidr_ip.parse::<IpAddr>(), prefix_len.parse::<u8>())
+                {
                     if Self::ip_matches_cidr(ip, net_ip, bits) {
                         return true;
                     }
@@ -208,7 +219,11 @@ impl AppConfig {
                 if bits > 32 {
                     return false;
                 }
-                let mask = if bits == 32 { !0u32 } else { !0u32 << (32 - bits) };
+                let mask = if bits == 32 {
+                    !0u32
+                } else {
+                    !0u32 << (32 - bits)
+                };
                 let target_u32 = u32::from(target);
                 let net_u32 = u32::from(net);
                 (target_u32 & mask) == (net_u32 & mask)
@@ -220,7 +235,11 @@ impl AppConfig {
                 if bits > 128 {
                     return false;
                 }
-                let mask = if bits == 128 { !0u128 } else { !0u128 << (128 - bits) };
+                let mask = if bits == 128 {
+                    !0u128
+                } else {
+                    !0u128 << (128 - bits)
+                };
                 let target_u128 = u128::from(target);
                 let net_u128 = u128::from(net);
                 (target_u128 & mask) == (net_u128 & mask)

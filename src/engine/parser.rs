@@ -30,10 +30,13 @@ impl IpParser {
             }
             let mut search_len = line.len();
             while search_len >= prefix.len() {
-                if let Some(pos) = line[..search_len].windows(prefix.len()).rposition(|w| w == prefix) {
+                if let Some(pos) = line[..search_len]
+                    .windows(prefix.len())
+                    .rposition(|w| w == prefix)
+                {
                     let after = &line[pos + prefix.len()..];
                     if let Some(ip) = Self::extract_first_ip_token_bytes(after) {
-                        if best.as_ref().map_or(true, |(best_pos, _)| pos > *best_pos) {
+                        if best.as_ref().is_none_or(|(best_pos, _)| pos > *best_pos) {
                             best = Some((pos, ip));
                         }
                         break;
@@ -72,7 +75,12 @@ impl IpParser {
     fn extract_first_ip_token_bytes(slice: &[u8]) -> Option<IpAddr> {
         // Skip leading whitespace
         let mut start = 0;
-        while start < slice.len() && (slice[start] == b' ' || slice[start] == b'\t' || slice[start] == b'\r' || slice[start] == b'\n') {
+        while start < slice.len()
+            && (slice[start] == b' '
+                || slice[start] == b'\t'
+                || slice[start] == b'\r'
+                || slice[start] == b'\n')
+        {
             start += 1;
         }
         if start >= slice.len() {
@@ -81,7 +89,12 @@ impl IpParser {
 
         // Find end of token
         let mut end = start;
-        while end < slice.len() && slice[end] != b' ' && slice[end] != b'\t' && slice[end] != b'\r' && slice[end] != b'\n' {
+        while end < slice.len()
+            && slice[end] != b' '
+            && slice[end] != b'\t'
+            && slice[end] != b'\r'
+            && slice[end] != b'\n'
+        {
             end += 1;
         }
 
@@ -93,8 +106,18 @@ impl IpParser {
     #[inline]
     fn clean_token_bytes(token: &[u8]) -> &[u8] {
         let is_wrapper = |b: u8| -> bool {
-            b == b'[' || b == b']' || b == b'(' || b == b')' || b == b'{' || b == b'}' ||
-            b == b',' || b == b';' || b == b'\'' || b == b'"' || b == b'<' || b == b'>'
+            b == b'['
+                || b == b']'
+                || b == b'('
+                || b == b')'
+                || b == b'{'
+                || b == b'}'
+                || b == b','
+                || b == b';'
+                || b == b'\''
+                || b == b'"'
+                || b == b'<'
+                || b == b'>'
         };
 
         let mut start = 0;
@@ -112,7 +135,10 @@ impl IpParser {
 
     /// Iterator over whitespace-delimited tokens in reverse order (zero allocation).
     fn split_whitespace_rev(slice: &[u8]) -> WhitespaceRevIter<'_> {
-        WhitespaceRevIter { slice, end: slice.len() }
+        WhitespaceRevIter {
+            slice,
+            end: slice.len(),
+        }
     }
 
     /// Fast, zero-allocation parser for IPv4 byte slices (e.g. `b"192.168.1.1"`).
@@ -136,7 +162,9 @@ impl IpParser {
                 has_digits = false;
             } else if b.is_ascii_digit() {
                 has_digits = true;
-                current_val = current_val.checked_mul(10)?.checked_add((b - b'0') as u16)?;
+                current_val = current_val
+                    .checked_mul(10)?
+                    .checked_add((b - b'0') as u16)?;
                 if current_val > 255 {
                     return None;
                 }
@@ -230,9 +258,18 @@ mod tests {
 
     #[test]
     fn test_parse_ipv4_bytes_direct() {
-        assert_eq!(IpParser::parse_ipv4_bytes(b"1.2.3.4"), Some(Ipv4Addr::new(1, 2, 3, 4)));
-        assert_eq!(IpParser::parse_ipv4_bytes(b"255.255.255.255"), Some(Ipv4Addr::new(255, 255, 255, 255)));
-        assert_eq!(IpParser::parse_ipv4_bytes(b"0.0.0.0"), Some(Ipv4Addr::new(0, 0, 0, 0)));
+        assert_eq!(
+            IpParser::parse_ipv4_bytes(b"1.2.3.4"),
+            Some(Ipv4Addr::new(1, 2, 3, 4))
+        );
+        assert_eq!(
+            IpParser::parse_ipv4_bytes(b"255.255.255.255"),
+            Some(Ipv4Addr::new(255, 255, 255, 255))
+        );
+        assert_eq!(
+            IpParser::parse_ipv4_bytes(b"0.0.0.0"),
+            Some(Ipv4Addr::new(0, 0, 0, 0))
+        );
         assert_eq!(IpParser::parse_ipv4_bytes(b"256.1.1.1"), None);
         assert_eq!(IpParser::parse_ipv4_bytes(b"1.2.3"), None);
         assert_eq!(IpParser::parse_ipv4_bytes(b"1.2.3.4.5"), None);
@@ -242,12 +279,18 @@ mod tests {
     #[test]
     fn test_extract_from_byte_slice() {
         let line = b"Nov  5 14:22:50 host sshd[12345]: Failed password for root from 192.168.1.100 port 45222 ssh2";
-        assert_eq!(IpParser::extract_ip_from_bytes(line), Some("192.168.1.100".parse().unwrap()));
+        assert_eq!(
+            IpParser::extract_ip_from_bytes(line),
+            Some("192.168.1.100".parse().unwrap())
+        );
     }
 
     #[test]
     fn test_extract_ssh_log_injection() {
         let line = b"Nov  5 14:22:50 server sshd[12345]: Failed password for invalid user from 1.1.1.1 from 203.0.113.199 port 54321 ssh2";
-        assert_eq!(IpParser::extract_ip_from_bytes(line), Some("203.0.113.199".parse().unwrap()));
+        assert_eq!(
+            IpParser::extract_ip_from_bytes(line),
+            Some("203.0.113.199".parse().unwrap())
+        );
     }
 }

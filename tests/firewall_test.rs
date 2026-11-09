@@ -1,8 +1,8 @@
-use std::net::IpAddr;
-use bannix::firewall::{auto_detect, detect_backend, FirewallBackend};
-use bannix::firewall::netlink::NetlinkBackend;
 use bannix::firewall::ipset::IpsetBackend;
 use bannix::firewall::iptables::IptablesBackend;
+use bannix::firewall::netlink::NetlinkBackend;
+use bannix::firewall::{auto_detect, detect_backend, FirewallBackend};
+use std::net::IpAddr;
 
 #[test]
 fn test_backend_detection() {
@@ -32,9 +32,11 @@ fn test_iptables_backend_lifecycle() {
     assert!(ipt.ban_ip(ip1, 300).is_ok());
     assert!(ipt.is_ip_banned(&ip1));
     assert!(!ipt.is_ip_banned(&ip2));
+    assert_eq!(ipt.list_banned().len(), 1);
 
     assert!(ipt.unban_ip(ip1).is_ok());
     assert!(!ipt.is_ip_banned(&ip1));
+    assert_eq!(ipt.list_banned().len(), 0);
 
     assert!(ipt.cleanup().is_ok());
 }
@@ -57,31 +59,58 @@ fn test_netlink_kernel_bridge_lifecycle() {
     let mut nft = NetlinkBackend::new(table);
 
     // 1. Check support
-    assert!(nft.is_supported(), "Kernel netlink socket must be supported");
+    assert!(
+        nft.is_supported(),
+        "Kernel netlink socket must be supported"
+    );
 
     // 2. Initialize table, sets (v4 & v6 with timeout flag), chains, and rules
     let init_res = nft.init();
-    assert!(init_res.is_ok(), "Netlink init failed: {:?}", init_res.err());
+    assert!(
+        init_res.is_ok(),
+        "Netlink init failed: {:?}",
+        init_res.err()
+    );
 
     // 3. Ban IPv4 with dynamic kernel timeout (30 seconds)
     let ip_v4: IpAddr = "198.51.100.199".parse().unwrap();
     let ban_v4_res = nft.ban_ip(ip_v4, 30);
-    assert!(ban_v4_res.is_ok(), "Netlink ban IPv4 failed: {:?}", ban_v4_res.err());
+    assert!(
+        ban_v4_res.is_ok(),
+        "Netlink ban IPv4 failed: {:?}",
+        ban_v4_res.err()
+    );
 
     // 4. Ban IPv6 with dynamic kernel timeout (30 seconds)
     let ip_v6: IpAddr = "2001:db8:ffff::99".parse().unwrap();
     let ban_v6_res = nft.ban_ip(ip_v6, 30);
-    assert!(ban_v6_res.is_ok(), "Netlink ban IPv6 failed: {:?}", ban_v6_res.err());
+    assert!(
+        ban_v6_res.is_ok(),
+        "Netlink ban IPv6 failed: {:?}",
+        ban_v6_res.err()
+    );
 
     // 5. Unban IPv4
     let unban_v4_res = nft.unban_ip(ip_v4);
-    assert!(unban_v4_res.is_ok(), "Netlink unban IPv4 failed: {:?}", unban_v4_res.err());
+    assert!(
+        unban_v4_res.is_ok(),
+        "Netlink unban IPv4 failed: {:?}",
+        unban_v4_res.err()
+    );
 
     // 6. Unban IPv6
     let unban_v6_res = nft.unban_ip(ip_v6);
-    assert!(unban_v6_res.is_ok(), "Netlink unban IPv6 failed: {:?}", unban_v6_res.err());
+    assert!(
+        unban_v6_res.is_ok(),
+        "Netlink unban IPv6 failed: {:?}",
+        unban_v6_res.err()
+    );
 
     // 7. Cleanup test table
     let clean_res = nft.cleanup();
-    assert!(clean_res.is_ok(), "Netlink cleanup table failed: {:?}", clean_res.err());
+    assert!(
+        clean_res.is_ok(),
+        "Netlink cleanup table failed: {:?}",
+        clean_res.err()
+    );
 }

@@ -55,16 +55,22 @@ fn test_inotify_append_and_rotation_lifecycle() {
             .append(true)
             .open(&log_file)
             .expect("open for append");
-        writeln!(f, "Nov  5 14:00:00 server sshd[100]: Failed password for root from 192.168.100.5 port 22").unwrap();
+        writeln!(
+            f,
+            "Nov  5 14:00:00 server sshd[100]: Failed password for root from 192.168.100.5 port 22"
+        )
+        .unwrap();
     }
 
     // Poll watcher
     sleep(Duration::from_millis(50));
-    let n = watcher.poll_next_lines(200, |line| {
-        if let Some(ip) = process_log_line(line, &matcher) {
-            collected.push(ip);
-        }
-    }).unwrap();
+    let n = watcher
+        .poll_next_lines(200, |line| {
+            if let Some(ip) = process_log_line(line, &matcher) {
+                collected.push(ip);
+            }
+        })
+        .unwrap();
     assert_eq!(n, 1);
     assert_eq!(collected.len(), 1);
     assert_eq!(collected[0], "192.168.100.5".parse::<IpAddr>().unwrap());
@@ -80,21 +86,30 @@ fn test_inotify_append_and_rotation_lifecycle() {
             .truncate(true)
             .open(&log_file)
             .expect("create new auth.log after rotate");
-        writeln!(f, "Nov  5 14:00:05 server sshd[101]: Invalid user admin from 10.20.30.40 port 22").unwrap();
+        writeln!(
+            f,
+            "Nov  5 14:00:05 server sshd[101]: Invalid user admin from 10.20.30.40 port 22"
+        )
+        .unwrap();
     }
 
     // Poll watcher (should detect IN_MOVE_SELF and auto-reopen new auth.log)
     sleep(Duration::from_millis(100));
     let mut rotated_collected: Vec<IpAddr> = Vec::new();
-    let n = watcher.poll_next_lines(300, |line| {
-        if let Some(ip) = process_log_line(line, &matcher) {
-            rotated_collected.push(ip);
-        }
-    }).unwrap();
+    let n = watcher
+        .poll_next_lines(300, |line| {
+            if let Some(ip) = process_log_line(line, &matcher) {
+                rotated_collected.push(ip);
+            }
+        })
+        .unwrap();
 
     assert!(n >= 1, "Watcher must read lines from rotated file");
     assert_eq!(rotated_collected.len(), 1);
-    assert_eq!(rotated_collected[0], "10.20.30.40".parse::<IpAddr>().unwrap());
+    assert_eq!(
+        rotated_collected[0],
+        "10.20.30.40".parse::<IpAddr>().unwrap()
+    );
 
     // Clean up test dir
     let _ = fs::remove_dir_all(&test_dir);
@@ -115,7 +130,11 @@ fn test_inotify_fragmented_partial_writes() {
             .open(&log_file)
             .unwrap();
         // Write partial line without newline
-        write!(f, "Nov  5 14:00:10 server sshd[102]: Failed password for invalid user ").unwrap();
+        write!(
+            f,
+            "Nov  5 14:00:10 server sshd[102]: Failed password for invalid user "
+        )
+        .unwrap();
     }
 
     let mut watcher = InotifyWatcher::new(&log_file, false).expect("init watcher");
@@ -134,19 +153,18 @@ fn test_inotify_fragmented_partial_writes() {
 
     // Now write the remainder with newline
     {
-        let mut f = OpenOptions::new()
-            .append(true)
-            .open(&log_file)
-            .unwrap();
+        let mut f = OpenOptions::new().append(true).open(&log_file).unwrap();
         writeln!(f, "hacker from 172.16.50.99 port 22").unwrap();
     }
 
     sleep(Duration::from_millis(50));
-    let n2 = watcher.poll_next_lines(200, |line| {
-        if let Some(ip) = process_log_line(line, &matcher) {
-            collected.push(ip);
-        }
-    }).unwrap();
+    let n2 = watcher
+        .poll_next_lines(200, |line| {
+            if let Some(ip) = process_log_line(line, &matcher) {
+                collected.push(ip);
+            }
+        })
+        .unwrap();
 
     // Now the full reassembled line is emitted!
     assert_eq!(n2, 1);

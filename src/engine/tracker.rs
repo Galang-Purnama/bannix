@@ -96,9 +96,13 @@ impl SlidingWindowTracker {
         entry.last_seen = timestamp;
 
         if entry.strikes >= self.maxretry {
-            StrikeResult::BanTriggered { strikes: entry.strikes }
+            StrikeResult::BanTriggered {
+                strikes: entry.strikes,
+            }
         } else {
-            StrikeResult::Recorded { strikes: entry.strikes }
+            StrikeResult::Recorded {
+                strikes: entry.strikes,
+            }
         }
     }
 

@@ -78,14 +78,8 @@ impl FastIpBridge {
     pub fn extract_ip(buf: &[u8]) -> Option<IpAddr> {
         let mut is_v6: u8 = 0;
         let mut ip_bytes = [0u8; 16];
-        let ret = unsafe {
-            fast_ip_extract(
-                buf.as_ptr(),
-                buf.len(),
-                &mut is_v6,
-                ip_bytes.as_mut_ptr(),
-            )
-        };
+        let ret =
+            unsafe { fast_ip_extract(buf.as_ptr(), buf.len(), &mut is_v6, ip_bytes.as_mut_ptr()) };
         if ret == 0 {
             if is_v6 == 0 {
                 let mut v4_bytes = [0u8; 4];
@@ -121,8 +115,10 @@ impl RawNetlinkBridge {
     }
 
     pub fn init_table_and_set(&mut self, table: &str, set: &str) -> Result<(), io::Error> {
-        let c_table = CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let c_set = CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_table =
+            CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_set =
+            CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let ret = unsafe {
             c_netlink_init_table_and_set(self.fd, c_table.as_ptr(), c_set.as_ptr(), &mut self.seq)
         };
@@ -133,12 +129,27 @@ impl RawNetlinkBridge {
         }
     }
 
-    pub fn add_set_elem_v4(&mut self, table: &str, set: &str, ip: Ipv4Addr, timeout_secs: u64) -> Result<(), io::Error> {
-        let c_table = CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let c_set = CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    pub fn add_set_elem_v4(
+        &mut self,
+        table: &str,
+        set: &str,
+        ip: Ipv4Addr,
+        timeout_secs: u64,
+    ) -> Result<(), io::Error> {
+        let c_table =
+            CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_set =
+            CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let be32 = u32::from_ne_bytes(ip.octets());
         let ret = unsafe {
-            c_netlink_add_set_elem_v4(self.fd, c_table.as_ptr(), c_set.as_ptr(), be32, timeout_secs, &mut self.seq)
+            c_netlink_add_set_elem_v4(
+                self.fd,
+                c_table.as_ptr(),
+                c_set.as_ptr(),
+                be32,
+                timeout_secs,
+                &mut self.seq,
+            )
         };
         if ret < 0 {
             Err(io::Error::from_raw_os_error(-ret))
@@ -147,12 +158,25 @@ impl RawNetlinkBridge {
         }
     }
 
-    pub fn del_set_elem_v4(&mut self, table: &str, set: &str, ip: Ipv4Addr) -> Result<(), io::Error> {
-        let c_table = CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let c_set = CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    pub fn del_set_elem_v4(
+        &mut self,
+        table: &str,
+        set: &str,
+        ip: Ipv4Addr,
+    ) -> Result<(), io::Error> {
+        let c_table =
+            CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_set =
+            CString::new(set).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let be32 = u32::from_ne_bytes(ip.octets());
         let ret = unsafe {
-            c_netlink_del_set_elem_v4(self.fd, c_table.as_ptr(), c_set.as_ptr(), be32, &mut self.seq)
+            c_netlink_del_set_elem_v4(
+                self.fd,
+                c_table.as_ptr(),
+                c_set.as_ptr(),
+                be32,
+                &mut self.seq,
+            )
         };
         if ret < 0 {
             Err(io::Error::from_raw_os_error(-ret))
@@ -162,10 +186,9 @@ impl RawNetlinkBridge {
     }
 
     pub fn del_table(&mut self, table: &str) -> Result<(), io::Error> {
-        let c_table = CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let ret = unsafe {
-            c_netlink_del_table(self.fd, c_table.as_ptr(), &mut self.seq)
-        };
+        let c_table =
+            CString::new(table).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let ret = unsafe { c_netlink_del_table(self.fd, c_table.as_ptr(), &mut self.seq) };
         if ret < 0 {
             Err(io::Error::from_raw_os_error(-ret))
         } else {
@@ -189,9 +212,7 @@ pub struct KernelProbeBridge;
 impl KernelProbeBridge {
     pub fn get_kernel_release() -> Option<String> {
         let mut buf = [0u8; 128];
-        let ret = unsafe {
-            c_kernel_get_version(buf.as_mut_ptr() as *mut libc::c_char, buf.len())
-        };
+        let ret = unsafe { c_kernel_get_version(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
         if ret == 0 {
             let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
             String::from_utf8(buf[..len].to_vec()).ok()
@@ -297,4 +318,3 @@ mod tests {
         assert!(!RawSocketBridge::is_iface_up("nonexistent_if_xyz"));
     }
 }
-

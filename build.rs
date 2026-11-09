@@ -17,4 +17,3 @@ fn main() {
         .opt_level(3)
         .compile("bannix_c");
 }
-

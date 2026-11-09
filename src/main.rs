@@ -7,6 +7,7 @@ use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use bannix::config::{AppConfig, JailConfig};
+use bannix::engine::ban_registry::BanRegistry;
 use bannix::engine::matcher::PatternMatcher;
 use bannix::engine::parser::IpParser;
 use bannix::engine::tracker::{SlidingWindowTracker, StrikeResult};
@@ -22,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut custom_socket: Option<String> = None;
     let mut dry_run = false;
     let mut test_config_only = false;
+    let mut json_output = false;
     let mut subcommand: Option<String> = None;
     let mut sub_args: Vec<String> = Vec::new();
 
@@ -37,6 +39,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sub_args.push(args[i + 1].clone());
                     i += 1;
                 }
+            }
+            "list" | "banned" | "bans" | "jails" => {
+                subcommand = Some(args[i].clone());
+                while i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    sub_args.push(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            "-j" | "--json" => {
+                json_output = true;
             }
             "-s" | "--socket" => {
                 if i + 1 < args.len() {
@@ -79,7 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(p) => p,
             None => {
                 eprintln!("Error: Cannot connect to bannix daemon. No active socket found.");
-                eprintln!("Is bannix daemon running? (checked: {})", bannix::ipc::FALLBACK_SOCKETS.join(", "));
+                eprintln!(
+                    "Is bannix daemon running? (checked: {})",
+                    bannix::ipc::FALLBACK_SOCKETS.join(", ")
+                );
                 std::process::exit(1);
             }
         };
@@ -87,6 +102,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let request = match cmd.as_str() {
             "status" => "STATUS".to_string(),
             "ping" => "PING".to_string(),
+            "list" => {
+                let is_banned_sub = sub_args.first().map(|s| s.as_str()) == Some("banned")
+                    || sub_args.first().map(|s| s.as_str()) == Some("bans");
+                if is_banned_sub {
+                    let jail = sub_args.get(1).map(|s| s.as_str()).unwrap_or("");
+                    if json_output {
+                        format!("BANNED_JSON {}", jail).trim().to_string()
+                    } else {
+                        format!("BANNED {}", jail).trim().to_string()
+                    }
+                } else if sub_args.first().map(|s| s.as_str()) == Some("jails") {
+                    let jail = sub_args.get(1).map(|s| s.as_str()).unwrap_or("");
+                    if json_output {
+                        format!("LIST_JSON {}", jail).trim().to_string()
+                    } else {
+                        format!("LIST {}", jail).trim().to_string()
+                    }
+                } else {
+                    let jail = sub_args.first().map(|s| s.as_str()).unwrap_or("");
+                    if json_output {
+                        format!("LIST_JSON {}", jail).trim().to_string()
+                    } else {
+                        format!("LIST {}", jail).trim().to_string()
+                    }
+                }
+            }
+            "banned" | "bans" => {
+                let jail = sub_args.first().map(|s| s.as_str()).unwrap_or("");
+                if json_output {
+                    format!("BANNED_JSON {}", jail).trim().to_string()
+                } else {
+                    format!("BANNED {}", jail).trim().to_string()
+                }
+            }
+            "jails" => {
+                let jail = sub_args.first().map(|s| s.as_str()).unwrap_or("");
+                if json_output {
+                    format!("LIST_JSON {}", jail).trim().to_string()
+                } else {
+                    format!("LIST {}", jail).trim().to_string()
+                }
+            }
             "unban" => {
                 if sub_args.is_empty() {
                     eprintln!("Error: Missing IP address to unban.");
@@ -155,13 +212,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => Level::INFO,
     };
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .finish();
+    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    info!("bannix daemon initialized (log_level: {}, backend: {}, dry_run: {})",
-        cfg.daemon.log_level, cfg.daemon.backend, dry_run);
+    info!(
+        "bannix daemon initialized (log_level: {}, backend: {}, dry_run: {})",
+        cfg.daemon.log_level, cfg.daemon.backend, dry_run
+    );
 
     // Initialize Firewall Backend
     let mut fw = firewall::detect_backend(&cfg.daemon.backend, &cfg.daemon.table_name);
@@ -172,6 +229,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         info!("[DRY-RUN] Firewall initialization skipped.");
     }
+
+    let bans_arc = Arc::new(RwLock::new(BanRegistry::new()));
+    // Synchronize pre-existing kernel firewall bans
+    if !dry_run {
+        let kernel_bans = fw.list_banned();
+        bans_arc.write().unwrap().sync_with_kernel(&kernel_bans);
+    }
+
     let firewall_arc: Arc<Mutex<Box<dyn FirewallBackend>>> = Arc::new(Mutex::new(fw));
     let cfg_arc = Arc::new(RwLock::new(cfg));
 
@@ -188,12 +253,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let jail_cloned = jail.clone();
             let cfg_ref = Arc::clone(&cfg_arc);
             let fw_ref = Arc::clone(&firewall_arc);
+            let bans_ref = Arc::clone(&bans_arc);
 
             tokio::spawn(async move {
-                run_jail_worker(jail_name_cloned, jail_cloned, cfg_ref, fw_ref, dry_run).await;
+                run_jail_worker(
+                    jail_name_cloned,
+                    jail_cloned,
+                    cfg_ref,
+                    fw_ref,
+                    bans_ref,
+                    dry_run,
+                )
+                .await;
             });
         }
-        info!("All active jails launched (total: {}). Daemon listening for attacks.", active_jails);
+        info!(
+            "All active jails launched (total: {}). Daemon listening for attacks.",
+            active_jails
+        );
     }
 
     // Start IPC Control Socket Server
@@ -202,9 +279,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_path_cloned = socket_path.clone();
     let cfg_ipc = Arc::clone(&cfg_arc);
     let fw_ipc = Arc::clone(&firewall_arc);
+    let bans_ipc = Arc::clone(&bans_arc);
 
     tokio::spawn(async move {
-        if let Err(e) = bannix::ipc::run_ipc_server(socket_path_cloned, cfg_ipc, fw_ipc, start_time).await {
+        if let Err(e) =
+            bannix::ipc::run_ipc_server(socket_path_cloned, cfg_ipc, fw_ipc, bans_ipc, start_time)
+                .await
+        {
             error!("Failed to run IPC server: {}", e);
         }
     });
@@ -257,18 +338,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_help() {
-    println!("bannix v{} - Ultra-Lightweight Intrusion Prevention System", VERSION);
+    println!(
+        "bannix v{} - Ultra-Lightweight Intrusion Prevention System",
+        VERSION
+    );
     println!("Usage: bannix [COMMAND] [OPTIONS]");
     println!();
     println!("Commands:");
     println!("  status               Show daemon status, uptime, backend, and active jails");
+    println!("  list [JAIL]          List configured jails, status, and ban counts (or details of a jail)");
+    println!("  banned [JAIL]        List all currently banned IPs in the kernel firewall");
     println!("  unban <IP>           Manually unban an IP from kernel firewall");
     println!("  ban <IP> [SECONDS]   Manually ban an IP (default: 3600 seconds)");
     println!("  ping                 Test connectivity to running bannix daemon");
     println!();
     println!("Options:");
     println!("  -c, --config <PATH>  Path to configuration file (default: config/bannix.toml)");
-    println!("  -s, --socket <PATH>  Path to IPC control socket (default: /run/bannix/bannix.sock)");
+    println!(
+        "  -s, --socket <PATH>  Path to IPC control socket (default: /run/bannix/bannix.sock)"
+    );
+    println!("  -j, --json           Output in JSON format (for list and banned commands)");
     println!("      --dry-run        Simulate attacks and rate-limiting without modifying kernel firewall");
     println!("      --test-config    Validate syntax and semantics of configuration and exit");
     println!("  -v, --version        Show version information");
@@ -286,7 +375,10 @@ fn run_config_test(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("  ✓ TOML syntax and structure: Valid");
-    println!("  ✓ Daemon backend: '{}', log_level: '{}'", cfg.daemon.backend, cfg.daemon.log_level);
+    println!(
+        "  ✓ Daemon backend: '{}', log_level: '{}'",
+        cfg.daemon.backend, cfg.daemon.log_level
+    );
 
     // Validate whitelist
     for entry in &cfg.whitelist.ips {
@@ -296,13 +388,19 @@ fn run_config_test(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     }
-    println!("  ✓ Whitelist entries: {} validated", cfg.whitelist.ips.len());
+    println!(
+        "  ✓ Whitelist entries: {} validated",
+        cfg.whitelist.ips.len()
+    );
 
     // Validate jails
     let mut valid_jails = 0;
     for (name, jail) in &cfg.jails {
         if jail.patterns.is_empty() && jail.enabled {
-            eprintln!("⚠️ Warning: Jail '{}' is enabled but has no patterns defined.", name);
+            eprintln!(
+                "⚠️ Warning: Jail '{}' is enabled but has no patterns defined.",
+                name
+            );
         }
         if let Err(e) = PatternMatcher::new(&jail.patterns) {
             eprintln!("❌ Jail '{}' pattern compilation FAILED: {}", name, e);
@@ -310,7 +408,10 @@ fn run_config_test(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
         valid_jails += 1;
     }
-    println!("  ✓ Jails configured: {} (compiled DFA pattern engines successfully)", valid_jails);
+    println!(
+        "  ✓ Jails configured: {} (compiled DFA pattern engines successfully)",
+        valid_jails
+    );
 
     println!("\n✅ Configuration syntax and logic are completely VALID!");
     Ok(())
@@ -321,9 +422,13 @@ async fn run_jail_worker(
     jail: JailConfig,
     cfg: Arc<RwLock<AppConfig>>,
     fw: Arc<Mutex<Box<dyn FirewallBackend>>>,
+    bans: Arc<RwLock<BanRegistry>>,
     dry_run: bool,
 ) {
-    info!("Starting jail '{}' monitoring '{}' (mode: {})", name, jail.log_path, jail.mode);
+    info!(
+        "Starting jail '{}' monitoring '{}' (mode: {})",
+        name, jail.log_path, jail.mode
+    );
 
     let matcher = match PatternMatcher::new(&jail.patterns) {
         Ok(m) => m,
@@ -341,7 +446,9 @@ async fn run_jail_worker(
 
         loop {
             journal.poll_next_lines(|line| {
-                process_line_event(&name, line, &matcher, &tracker, &cfg, &jail, &fw, dry_run);
+                process_line_event(
+                    &name, line, &matcher, &tracker, &cfg, &jail, &fw, &bans, dry_run,
+                );
             });
 
             let now = SlidingWindowTracker::current_timestamp();
@@ -356,7 +463,10 @@ async fn run_jail_worker(
         let mut inotify = match InotifyWatcher::new(&jail.log_path, true) {
             Ok(w) => w,
             Err(e) => {
-                warn!("Could not immediately open '{}' for jail '{}': {}. Will retry in background.", jail.log_path, name, e);
+                warn!(
+                    "Could not immediately open '{}' for jail '{}': {}. Will retry in background.",
+                    jail.log_path, name, e
+                );
                 match InotifyWatcher::new(&jail.log_path, true) {
                     Ok(w) => w,
                     Err(_) => {
@@ -371,7 +481,9 @@ async fn run_jail_worker(
 
         loop {
             let _ = inotify.poll_next_lines(200, |line| {
-                process_line_event(&name, line, &matcher, &tracker, &cfg, &jail, &fw, dry_run);
+                process_line_event(
+                    &name, line, &matcher, &tracker, &cfg, &jail, &fw, &bans, dry_run,
+                );
             });
 
             let now = SlidingWindowTracker::current_timestamp();
@@ -385,6 +497,7 @@ async fn run_jail_worker(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_line_event(
     jail_name: &str,
     line: &[u8],
@@ -393,6 +506,7 @@ fn process_line_event(
     cfg_arc: &Arc<RwLock<AppConfig>>,
     jail: &JailConfig,
     fw: &Arc<Mutex<Box<dyn FirewallBackend>>>,
+    bans: &Arc<RwLock<BanRegistry>>,
     dry_run: bool,
 ) {
     if !matcher.is_match(line) {
@@ -415,10 +529,16 @@ fn process_line_event(
             // Whitelisted IP, do nothing
         }
         StrikeResult::Recorded { strikes } => {
-            info!("Jail '{}': Strike {}/{} for IP {}", jail_name, strikes, jail.maxretry, ip);
+            info!(
+                "Jail '{}': Strike {}/{} for IP {}",
+                jail_name, strikes, jail.maxretry, ip
+            );
         }
         StrikeResult::BanTriggered { strikes } => {
-            warn!("🚨 Jail '{}': Triggering ban for IP {} (strikes: {}, bantime: {}s)", jail_name, ip, strikes, jail.bantime);
+            warn!(
+                "🚨 Jail '{}': Triggering ban for IP {} (strikes: {}, bantime: {}s)",
+                jail_name, ip, strikes, jail.bantime
+            );
 
             if !dry_run {
                 // Direct Kernel Ban (in-process Netlink, zero subprocess!)
@@ -427,9 +547,15 @@ fn process_line_event(
                     error!("Failed to ban IP {} via firewall: {}", ip, e);
                 } else {
                     info!("Successfully banned IP {} in kernel firewall", ip);
+                    bans.write()
+                        .unwrap()
+                        .record_ban(ip, jail_name, jail.bantime);
                 }
             } else {
                 info!("[DRY-RUN] Would ban IP {} for {}s", ip, jail.bantime);
+                bans.write()
+                    .unwrap()
+                    .record_ban(ip, jail_name, jail.bantime);
             }
         }
     }
