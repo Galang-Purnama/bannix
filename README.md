@@ -217,6 +217,23 @@ sudo make install
 
 ---
 
+## 🔄 Updating bannix
+
+To update the `bannix` binary to the latest release on any server:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Galang-Purnama/bannix/main/install.sh | sudo bash -s -- --update
+```
+
+Or from a local git repository:
+```bash
+sudo ./install.sh --update
+```
+
+The updater downloads the latest static pre-compiled binary for your architecture (`x86_64` or `aarch64`), verifies it, replaces `/usr/local/bin/bannix`, checks configuration compatibility, and automatically restarts the systemd service.
+
+---
+
 ## 🗑️ Uninstallation
 
 To remove bannix completely from your system:

@@ -3,7 +3,7 @@ BINDIR ?= $(PREFIX)/bin
 CONFDIR ?= /etc/bannix
 SYSTEMDDIR ?= /etc/systemd/system
 
-.PHONY: all build release check test clean install uninstall
+.PHONY: all build release check test clean install update uninstall
 
 all: build
 
@@ -32,6 +32,12 @@ install: release
 	install -d $(DESTDIR)$(SYSTEMDDIR)
 	install -m 644 systemd/bannix.service $(DESTDIR)$(SYSTEMDDIR)/bannix.service
 	systemctl daemon-reload || true
+
+update: release
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 target/release/bannix $(DESTDIR)$(BINDIR)/bannix
+	systemctl daemon-reload || true
+	systemctl restart bannix 2>/dev/null || true
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/bannix
