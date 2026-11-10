@@ -30,6 +30,7 @@ const IPSET_ATTR_IPADDR_IPV6: u16 = 2;
 
 const IPSET_PROTOCOL: u8 = 7;
 const NFPROTO_IPV4: u8 = 2;
+const NFPROTO_IPV6: u8 = 10;
 
 #[allow(dead_code)]
 pub struct IpsetBackend {
@@ -165,20 +166,32 @@ impl FirewallBackend for IpsetBackend {
     }
 
     fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Create hash:ip set for IPv4 with timeout support
-        let mut create_payload = Vec::new();
-        create_payload.push(IPSET_PROTOCOL); // protocol 7
-        Self::append_nla(&mut create_payload, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
-        Self::append_nla_str(&mut create_payload, IPSET_ATTR_SETNAME, &self.set_v4);
-        Self::append_nla_str(&mut create_payload, IPSET_ATTR_TYPENAME, "hash:ip");
-        Self::append_nla(&mut create_payload, IPSET_ATTR_REVISION, &[1]);
-        Self::append_nla(&mut create_payload, IPSET_ATTR_FAMILY, &[NFPROTO_IPV4]);
+        let mut create_payload_v4 = Vec::new();
+        create_payload_v4.push(IPSET_PROTOCOL);
+        Self::append_nla(&mut create_payload_v4, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla_str(&mut create_payload_v4, IPSET_ATTR_SETNAME, &self.set_v4);
+        Self::append_nla_str(&mut create_payload_v4, IPSET_ATTR_TYPENAME, "hash:ip");
+        Self::append_nla(&mut create_payload_v4, IPSET_ATTR_REVISION, &[1]);
+        Self::append_nla(&mut create_payload_v4, IPSET_ATTR_FAMILY, &[NFPROTO_IPV4]);
 
-        // Attempt netlink creation; if netlink is unavailable, maintain in-memory fallback
         let _ = self.send_ipset_cmd(
             IPSET_CMD_CREATE,
             NLM_F_REQUEST | NLM_F_CREATE,
-            &create_payload,
+            &create_payload_v4,
+        );
+
+        let mut create_payload_v6 = Vec::new();
+        create_payload_v6.push(IPSET_PROTOCOL);
+        Self::append_nla(&mut create_payload_v6, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla_str(&mut create_payload_v6, IPSET_ATTR_SETNAME, &self.set_v6);
+        Self::append_nla_str(&mut create_payload_v6, IPSET_ATTR_TYPENAME, "hash:ip");
+        Self::append_nla(&mut create_payload_v6, IPSET_ATTR_REVISION, &[1]);
+        Self::append_nla(&mut create_payload_v6, IPSET_ATTR_FAMILY, &[NFPROTO_IPV6]);
+
+        let _ = self.send_ipset_cmd(
+            IPSET_CMD_CREATE,
+            NLM_F_REQUEST | NLM_F_CREATE,
+            &create_payload_v6,
         );
 
         self.initialized = true;
@@ -244,10 +257,15 @@ impl FirewallBackend for IpsetBackend {
     }
 
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut destroy_payload = Vec::new();
-        Self::append_nla(&mut destroy_payload, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
-        Self::append_nla_str(&mut destroy_payload, IPSET_ATTR_SETNAME, &self.set_v4);
-        let _ = self.send_ipset_cmd(IPSET_CMD_DESTROY, NLM_F_REQUEST, &destroy_payload);
+        let mut destroy_v4 = Vec::new();
+        Self::append_nla(&mut destroy_v4, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla_str(&mut destroy_v4, IPSET_ATTR_SETNAME, &self.set_v4);
+        let _ = self.send_ipset_cmd(IPSET_CMD_DESTROY, NLM_F_REQUEST, &destroy_v4);
+
+        let mut destroy_v6 = Vec::new();
+        Self::append_nla(&mut destroy_v6, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla_str(&mut destroy_v6, IPSET_ATTR_SETNAME, &self.set_v6);
+        let _ = self.send_ipset_cmd(IPSET_CMD_DESTROY, NLM_F_REQUEST, &destroy_v6);
 
         self.fallback_tracker.clear();
         self.initialized = false;
