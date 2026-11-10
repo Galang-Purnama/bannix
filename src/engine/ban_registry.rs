@@ -152,17 +152,13 @@ impl BanRegistry {
             }
         }
 
-        // Remove entries if kernel has already expired them (only if kernel report was non-empty)
-        if !kernel_map.is_empty() {
-            map.retain(|ip, entry| {
-                if kernel_map.contains_key(ip) {
-                    true
-                } else {
-                    // Retain if it was just added in the last 2 seconds (race condition guard)
-                    now.saturating_sub(entry.banned_at) < 2
-                }
-            });
-        }
+        map.retain(|ip, entry| {
+            if kernel_map.contains_key(ip) {
+                true
+            } else {
+                now.saturating_sub(entry.banned_at) < 2
+            }
+        });
     }
 }
 
@@ -220,10 +216,8 @@ mod tests {
         let ip_kernel_only: IpAddr = "192.0.2.2".parse().unwrap();
         let now = BanRegistry::current_timestamp();
 
-        // 1. Record known ban in SSH jail
         registry.record_ban_at(ip_known, "ssh", 3600, now);
 
-        // 2. Kernel reports ip_known with 500s remaining, and ip_kernel_only with 1000s remaining
         let kernel_bans = vec![(ip_known, Some(500)), (ip_kernel_only, Some(1000))];
         registry.sync_with_kernel(&kernel_bans);
 
@@ -231,9 +225,17 @@ mod tests {
         assert_eq!(list.len(), 2);
 
         let known_entry = list.iter().find(|e| e.ip == ip_known).unwrap();
-        assert_eq!(known_entry.jail, "ssh"); // Preserved original jail!
+        assert_eq!(known_entry.jail, "ssh");
 
         let kernel_entry = list.iter().find(|e| e.ip == ip_kernel_only).unwrap();
         assert_eq!(kernel_entry.jail, "kernel");
+
+        let ip_old: IpAddr = "192.0.2.3".parse().unwrap();
+        registry.record_ban_at(ip_old, "nginx", 3600, now.saturating_sub(10));
+        assert_eq!(registry.total_active(), 3);
+
+        registry.sync_with_kernel(&[]);
+        assert_eq!(registry.total_active(), 2);
+        assert!(registry.list_active(None).iter().all(|e| e.ip != ip_old));
     }
 }

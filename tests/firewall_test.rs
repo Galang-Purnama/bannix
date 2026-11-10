@@ -47,9 +47,14 @@ fn test_ipset_backend_lifecycle() {
     assert!(ipset.is_supported());
     assert!(ipset.init().is_ok());
 
-    let ip: IpAddr = "198.51.100.10".parse().unwrap();
-    assert!(ipset.ban_ip(ip, 60).is_ok());
-    assert!(ipset.unban_ip(ip).is_ok());
+    let ip_v4: IpAddr = "198.51.100.10".parse().unwrap();
+    assert!(ipset.ban_ip(ip_v4, 60).is_ok());
+    assert!(ipset.unban_ip(ip_v4).is_ok());
+
+    let ip_v6: IpAddr = "2001:db8::10".parse().unwrap();
+    assert!(ipset.ban_ip(ip_v6, 60).is_ok());
+    assert!(ipset.unban_ip(ip_v6).is_ok());
+
     assert!(ipset.cleanup().is_ok());
 }
 

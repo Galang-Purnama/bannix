@@ -609,6 +609,7 @@ impl FirewallBackend for NetlinkBackend {
 
 pub fn parse_nft_json_elements(json: &str) -> Vec<(IpAddr, Option<u64>)> {
     let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut pos = 0;
     while let Some(val_idx) = json[pos..].find("\"val\":") {
         let actual_val_idx = pos + val_idx + 6;
@@ -633,11 +634,61 @@ pub fn parse_nft_json_elements(json: &str) -> Vec<(IpAddr, Option<u64>)> {
                         }
                     }
 
-                    results.push((ip, expires));
+                    if seen.insert(ip) {
+                        results.push((ip, expires));
+                    }
                 }
             }
         }
         pos = actual_val_idx + 1;
     }
+
+    if let Some(elem_idx) = json.find("\"elem\":") {
+        let rest = &json[elem_idx + 7..];
+        if let Some(start_arr) = rest.find('[') {
+            let arr_rest = &rest[start_arr + 1..];
+            if let Some(end_arr) = arr_rest.find(']') {
+                let elem_content = &arr_rest[..end_arr];
+                let mut p = 0;
+                while let Some(q1) = elem_content[p..].find('"') {
+                    let s_idx = p + q1 + 1;
+                    if let Some(q2) = elem_content[s_idx..].find('"') {
+                        let candidate = &elem_content[s_idx..s_idx + q2];
+                        if let Ok(ip) = candidate.parse::<IpAddr>() {
+                            if seen.insert(ip) {
+                                results.push((ip, None));
+                            }
+                        }
+                        p = s_idx + q2 + 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_nft_json_elements() {
+        let json_with_timeout = r#"{"nftables": [{"set": {"family": "inet", "name": "bannix_v4", "table": "bannix", "elem": [{"elem": {"val": "198.51.100.199", "timeout": 30, "expires": 28}}]}}]}"#;
+        let res1 = parse_nft_json_elements(json_with_timeout);
+        assert_eq!(res1.len(), 1);
+        assert_eq!(res1[0].0, "198.51.100.199".parse::<IpAddr>().unwrap());
+        assert_eq!(res1[0].1, Some(28));
+
+        let json_plain_elements = r#"{"nftables": [{"set": {"family": "inet", "name": "bannix_v4", "table": "bannix", "elem": ["198.51.100.200", "2001:db8::1"]}}]}"#;
+        let res2 = parse_nft_json_elements(json_plain_elements);
+        assert_eq!(res2.len(), 2);
+        assert_eq!(res2[0].0, "198.51.100.200".parse::<IpAddr>().unwrap());
+        assert_eq!(res2[0].1, None);
+        assert_eq!(res2[1].0, "2001:db8::1".parse::<IpAddr>().unwrap());
+        assert_eq!(res2[1].1, None);
+    }
 }
