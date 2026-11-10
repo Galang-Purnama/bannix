@@ -3,6 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 const CHUNK_SIZE: usize = 64 * 1024; // 64 KB fixed buffer
+const MAX_LOG_LINE: usize = 64 * 1024;
 
 /// Direct socket reader for systemd-journald stdout stream.
 /// Eliminates intermediate rsyslog disk writing and read polling.
@@ -11,6 +12,7 @@ pub struct JournalWatcher {
     stream: Option<UnixStream>,
     buffer: Box<[u8; CHUNK_SIZE]>,
     carry_over: Vec<u8>,
+    discarding_line: bool,
 }
 
 impl JournalWatcher {
@@ -26,6 +28,7 @@ impl JournalWatcher {
             stream,
             buffer: Box::new([0u8; CHUNK_SIZE]),
             carry_over: Vec::with_capacity(512),
+            discarding_line: false,
         }
     }
 
@@ -72,35 +75,44 @@ impl JournalWatcher {
                 Ok(n) => {
                     let chunk = &self.buffer[..n];
                     let mut start = 0;
-
                     for (idx, &b) in chunk.iter().enumerate() {
-                        if b == b'\n' {
-                            let line_part = &chunk[start..idx];
-                            start = idx + 1;
-
-                            if !self.carry_over.is_empty() {
-                                self.carry_over.extend_from_slice(line_part);
-                                let line = if self.carry_over.ends_with(b"\r") {
-                                    &self.carry_over[..self.carry_over.len() - 1]
-                                } else {
-                                    &self.carry_over[..]
-                                };
-                                callback(line);
-                                self.carry_over.clear();
-                            } else {
-                                let line = if line_part.ends_with(b"\r") {
-                                    &line_part[..line_part.len() - 1]
-                                } else {
-                                    line_part
-                                };
-                                callback(line);
-                            }
-                            lines_count += 1;
+                        if b != b'\n' {
+                            continue;
                         }
+                        let line_part = &chunk[start..idx];
+                        start = idx + 1;
+                        if self.discarding_line {
+                            self.discarding_line = false;
+                            self.carry_over.clear();
+                            lines_count += 1;
+                            continue;
+                        }
+                        if self.carry_over.len().saturating_add(line_part.len()) > MAX_LOG_LINE {
+                            self.carry_over.clear();
+                            lines_count += 1;
+                            continue;
+                        }
+                        if self.carry_over.is_empty() {
+                            callback(line_part.strip_suffix(b"\r").unwrap_or(line_part));
+                        } else {
+                            self.carry_over.extend_from_slice(line_part);
+                            callback(
+                                self.carry_over
+                                    .strip_suffix(b"\r")
+                                    .unwrap_or(&self.carry_over),
+                            );
+                            self.carry_over.clear();
+                        }
+                        lines_count += 1;
                     }
-
-                    if start < chunk.len() {
-                        self.carry_over.extend_from_slice(&chunk[start..]);
+                    if !self.discarding_line && start < chunk.len() {
+                        let tail = &chunk[start..];
+                        if self.carry_over.len().saturating_add(tail.len()) > MAX_LOG_LINE {
+                            self.carry_over.clear();
+                            self.discarding_line = true;
+                        } else {
+                            self.carry_over.extend_from_slice(tail);
+                        }
                     }
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {

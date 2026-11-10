@@ -117,7 +117,7 @@ bannix status
 ```
 *Example output:*
 ```text
-bannix daemon v0.1.4
+bannix daemon v0.1.5
 Uptime: 1420s
 Backend: nftables (Netlink) (table: bannix_filter)
 Whitelisted: 5 entries

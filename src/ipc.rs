@@ -1,11 +1,25 @@
 use std::fs;
 use std::net::IpAddr;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{debug, info};
+
+const MAX_IPC_COMMAND_BYTES: usize = 4096;
+const MAX_IPC_CONNECTIONS: usize = 64;
+
+struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 use crate::config::AppConfig;
 use crate::engine::BanRegistry;
@@ -53,6 +67,10 @@ pub fn find_socket_path(custom: Option<&str>) -> Option<PathBuf> {
     None
 }
 
+fn valid_ipc_line(line: &str) -> bool {
+    line.len() <= MAX_IPC_COMMAND_BYTES && line.ends_with('\n')
+}
+
 pub async fn send_command(socket_path: &Path, command: &str) -> Result<String, std::io::Error> {
     let mut stream = UnixStream::connect(socket_path).await?;
     stream.write_all(command.as_bytes()).await?;
@@ -77,34 +95,63 @@ pub async fn run_ipc_server(
     if let Some(parent) = socket_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::remove_file(&socket_path);
+    if let Ok(metadata) = fs::symlink_metadata(&socket_path) {
+        if !metadata.file_type().is_socket() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "refusing to replace a non-socket IPC path",
+            ));
+        }
+        fs::remove_file(&socket_path)?;
+    }
 
     let listener = UnixListener::bind(&socket_path)?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o660))?;
     info!("IPC control socket listening at {:?}", socket_path);
+    let active_connections = Arc::new(AtomicUsize::new(0));
 
     loop {
         match listener.accept().await {
             Ok((mut stream, _)) => {
+                if active_connections.fetch_add(1, Ordering::Relaxed) >= MAX_IPC_CONNECTIONS {
+                    active_connections.fetch_sub(1, Ordering::Relaxed);
+                    let _ = stream.shutdown().await;
+                    continue;
+                }
                 let cfg_ref = Arc::clone(&cfg);
                 let fw_ref = Arc::clone(&fw);
                 let bans_ref = Arc::clone(&bans);
+                let active = Arc::clone(&active_connections);
 
                 tokio::spawn(async move {
+                    let _guard = ConnectionGuard(active);
                     let (reader, mut writer) = stream.split();
-                    let mut buf_reader = TokioBufReader::new(reader);
+                    let buf_reader = TokioBufReader::new(reader);
                     let mut line = String::new();
-
-                    if buf_reader.read_line(&mut line).await.is_ok() {
-                        let response = handle_ipc_command(
-                            line.trim(),
-                            &cfg_ref,
-                            &fw_ref,
-                            &bans_ref,
-                            start_time,
-                        );
-                        let _ = writer.write_all(response.as_bytes()).await;
-                        let _ = writer.shutdown().await;
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        buf_reader
+                            .take((MAX_IPC_COMMAND_BYTES + 1) as u64)
+                            .read_line(&mut line),
+                    )
+                    .await;
+                    if let Ok(Ok(_)) = result {
+                        if valid_ipc_line(&line) {
+                            let response = handle_ipc_command(
+                                line.trim(),
+                                &cfg_ref,
+                                &fw_ref,
+                                &bans_ref,
+                                start_time,
+                            );
+                            let _ = writer.write_all(response.as_bytes()).await;
+                        } else {
+                            let _ = writer
+                                .write_all(b"ERROR: Invalid or oversized IPC command\n")
+                                .await;
+                        }
                     }
+                    let _ = writer.shutdown().await;
                 });
             }
             Err(e) => {
@@ -209,6 +256,10 @@ fn handle_unban(
             match fw_lock.unban_ip(ip) {
                 Ok(_) => {
                     bans.write().unwrap().remove_ban(&ip);
+                    let _ = bans
+                        .read()
+                        .unwrap()
+                        .save_to_file(BanRegistry::default_state_path());
                     format!("OK: Unbanned IP {}\n", ip)
                 }
                 Err(e) => format!("ERROR: Failed to unban {}: {}\n", ip, e),
@@ -238,6 +289,10 @@ fn handle_ban(
             match fw_lock.ban_ip(ip, timeout) {
                 Ok(_) => {
                     bans.write().unwrap().record_ban(ip, jail, timeout);
+                    let _ = bans
+                        .read()
+                        .unwrap()
+                        .save_to_file(BanRegistry::default_state_path());
                     format!("OK: Banned IP {} for {}s (jail: {})\n", ip, timeout, jail)
                 }
                 Err(e) => format!("ERROR: Failed to ban {}: {}\n", ip, e),
@@ -253,6 +308,17 @@ fn format_status(
     bans: &Arc<RwLock<BanRegistry>>,
     start_time: Instant,
 ) -> String {
+    // 1. Sync with kernel firewall first so live counts are accurate
+    {
+        let fw_lock = fw.lock().unwrap();
+        let kernel_bans = fw_lock.list_banned();
+        bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        let _ = bans
+            .read()
+            .unwrap()
+            .save_to_file(BanRegistry::default_state_path());
+    }
+
     let cfg_read = cfg.read().unwrap();
     let fw_lock = fw.lock().unwrap();
     let uptime = start_time.elapsed().as_secs();
@@ -299,6 +365,10 @@ fn format_list_jails(
         let fw_lock = fw.lock().unwrap();
         let kernel_bans = fw_lock.list_banned();
         bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        let _ = bans
+            .read()
+            .unwrap()
+            .save_to_file(BanRegistry::default_state_path());
     }
 
     let cfg_read = cfg.read().unwrap();
@@ -471,6 +541,10 @@ fn format_banned_ips(
         let fw_lock = fw.lock().unwrap();
         let kernel_bans = fw_lock.list_banned();
         bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        let _ = bans
+            .read()
+            .unwrap()
+            .save_to_file(BanRegistry::default_state_path());
     }
 
     let active_bans = bans.read().unwrap().list_active(jail_filter);

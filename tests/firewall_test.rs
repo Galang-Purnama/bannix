@@ -77,6 +77,20 @@ fn test_netlink_kernel_bridge_lifecycle() {
         init_res.err()
     );
 
+    // Repeated init must be idempotent and flush chain without duplicating rules
+    assert!(nft.init().is_ok(), "Repeated Netlink init must succeed");
+    let rules_output = std::process::Command::new("nft")
+        .args(["list", "chain", "inet", table, "input"])
+        .output()
+        .expect("list test chain");
+    let rules_str = String::from_utf8_lossy(&rules_output.stdout);
+    assert_eq!(
+        rules_str.matches(" drop").count(),
+        2,
+        "Duplicate drop rules detected: {}",
+        rules_str
+    );
+
     // 3. Ban IPv4 with dynamic kernel timeout (30 seconds)
     let ip_v4: IpAddr = "198.51.100.199".parse().unwrap();
     let ban_v4_res = nft.ban_ip(ip_v4, 30);

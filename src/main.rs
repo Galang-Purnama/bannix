@@ -231,10 +231,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let bans_arc = Arc::new(RwLock::new(BanRegistry::new()));
+    let state_file = BanRegistry::default_state_path();
+    if let Ok(n) = bans_arc.write().unwrap().load_from_file(&state_file) {
+        if n > 0 {
+            info!("Loaded {} active ban(s) from persistent state file", n);
+        }
+    }
     // Synchronize pre-existing kernel firewall bans
     if !dry_run {
         let kernel_bans = fw.list_banned();
         bans_arc.write().unwrap().sync_with_kernel(&kernel_bans);
+        let _ = bans_arc.read().unwrap().save_to_file(&state_file);
     }
 
     let firewall_arc: Arc<Mutex<Box<dyn FirewallBackend>>> = Arc::new(Mutex::new(fw));
@@ -322,6 +329,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Cleanup IPC socket
     let _ = std::fs::remove_file(&socket_path);
+
+    // Save persistent ban state
+    let _ = bans_arc.read().unwrap().save_to_file(&state_file);
 
     // Cleanup on exit if configured
     let purge_on_exit = cfg_arc.read().unwrap().daemon.purge_on_exit;
@@ -550,12 +560,20 @@ fn process_line_event(
                     bans.write()
                         .unwrap()
                         .record_ban(ip, jail_name, jail.bantime);
+                    let _ = bans
+                        .read()
+                        .unwrap()
+                        .save_to_file(BanRegistry::default_state_path());
                 }
             } else {
                 info!("[DRY-RUN] Would ban IP {} for {}s", ip, jail.bantime);
                 bans.write()
                     .unwrap()
                     .record_ban(ip, jail_name, jail.bantime);
+                let _ = bans
+                    .read()
+                    .unwrap()
+                    .save_to_file(BanRegistry::default_state_path());
             }
         }
     }

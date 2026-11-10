@@ -25,6 +25,8 @@ pub struct SlidingWindowTracker {
     maxretry: u16,
 }
 
+const MAX_TRACKER_ENTRIES: usize = 50_000;
+
 impl SlidingWindowTracker {
     pub fn new(findtime: u64, maxretry: u16) -> Self {
         Self {
@@ -50,6 +52,9 @@ impl SlidingWindowTracker {
     /// Records a strike at a specific Unix timestamp (zero-sleep deterministic execution).
     pub fn record_strike_at(&self, ip: IpAddr, timestamp: u64) -> bool {
         let mut map = self.history.write().unwrap();
+        if map.len() >= MAX_TRACKER_ENTRIES {
+            map.retain(|_, v| timestamp.saturating_sub(v.last_seen) <= self.findtime);
+        }
 
         let entry = map.entry(ip).or_insert(IpStrikeHistory {
             first_seen: timestamp,
@@ -80,6 +85,9 @@ impl SlidingWindowTracker {
         }
 
         let mut map = self.history.write().unwrap();
+        if map.len() >= MAX_TRACKER_ENTRIES {
+            map.retain(|_, v| timestamp.saturating_sub(v.last_seen) <= self.findtime);
+        }
 
         let entry = map.entry(ip).or_insert(IpStrikeHistory {
             first_seen: timestamp,

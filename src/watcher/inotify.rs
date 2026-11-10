@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const CHUNK_SIZE: usize = 64 * 1024; // 64 KB fixed buffer
+const MAX_LOG_LINE: usize = 64 * 1024;
 
 /// Non-blocking, zero-allocation log file reader using inotify and epoll.
 /// Handles log rotations (`IN_MOVE_SELF`, `IN_DELETE_SELF`, `IN_ATTRIB`) automatically.
@@ -14,6 +15,7 @@ pub struct InotifyWatcher {
     watch_desc: i32,
     buffer: Box<[u8; CHUNK_SIZE]>,
     carry_over: Vec<u8>,
+    discarding_line: bool,
     seek_to_end: bool,
 }
 
@@ -28,6 +30,7 @@ impl InotifyWatcher {
             watch_desc: -1,
             buffer: Box::new([0u8; CHUNK_SIZE]),
             carry_over: Vec::with_capacity(512),
+            discarding_line: false,
             seek_to_end,
         };
 
@@ -251,13 +254,23 @@ impl InotifyWatcher {
             }
 
             let chunk = &self.buffer[..n as usize];
-            lines_count += Self::process_chunk_data(&mut self.carry_over, chunk, &mut callback);
+            lines_count += Self::process_chunk_data(
+                &mut self.carry_over,
+                &mut self.discarding_line,
+                chunk,
+                &mut callback,
+            );
         }
 
         lines_count
     }
 
-    fn process_chunk_data<F>(carry_over: &mut Vec<u8>, chunk: &[u8], mut callback: F) -> usize
+    fn process_chunk_data<F>(
+        carry_over: &mut Vec<u8>,
+        discarding_line: &mut bool,
+        chunk: &[u8],
+        mut callback: F,
+    ) -> usize
     where
         F: FnMut(&[u8]),
     {
@@ -265,37 +278,41 @@ impl InotifyWatcher {
         let mut start = 0;
 
         for (idx, &b) in chunk.iter().enumerate() {
-            if b == b'\n' {
-                let line_part = &chunk[start..idx];
-                start = idx + 1;
-
-                if !carry_over.is_empty() {
-                    carry_over.extend_from_slice(line_part);
-                    // Trim trailing \r if CRLF
-                    let line = if carry_over.ends_with(b"\r") {
-                        &carry_over[..carry_over.len() - 1]
-                    } else {
-                        &carry_over[..]
-                    };
-                    callback(line);
-                    carry_over.clear();
-                } else {
-                    let line = if line_part.ends_with(b"\r") {
-                        &line_part[..line_part.len() - 1]
-                    } else {
-                        line_part
-                    };
-                    callback(line);
-                }
+            if b != b'\n' {
+                continue;
+            }
+            let line_part = &chunk[start..idx];
+            start = idx + 1;
+            if *discarding_line {
+                *discarding_line = false;
+                carry_over.clear();
                 count += 1;
+                continue;
+            }
+            if carry_over.len().saturating_add(line_part.len()) > MAX_LOG_LINE {
+                carry_over.clear();
+                count += 1;
+                continue;
+            }
+            if carry_over.is_empty() {
+                callback(line_part.strip_suffix(b"\r").unwrap_or(line_part));
+            } else {
+                carry_over.extend_from_slice(line_part);
+                callback(carry_over.strip_suffix(b"\r").unwrap_or(carry_over));
+                carry_over.clear();
+            }
+            count += 1;
+        }
+
+        if !*discarding_line && start < chunk.len() {
+            let tail = &chunk[start..];
+            if carry_over.len().saturating_add(tail.len()) > MAX_LOG_LINE {
+                carry_over.clear();
+                *discarding_line = true;
+            } else {
+                carry_over.extend_from_slice(tail);
             }
         }
-
-        // Store incomplete trailing bytes in carry_over for next read
-        if start < chunk.len() {
-            carry_over.extend_from_slice(&chunk[start..]);
-        }
-
         count
     }
 }

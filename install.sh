@@ -890,6 +890,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=3
 RuntimeDirectory=bannix
+StateDirectory=bannix
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 ProtectSystem=strict
@@ -897,7 +898,7 @@ ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 MemoryDenyWriteExecute=true
-ReadWritePaths=/etc/bannix
+ReadWritePaths=/etc/bannix /var/lib/bannix
 
 [Install]
 WantedBy=multi-user.target
@@ -933,7 +934,7 @@ step_end
 # ------------------------------------------------------------------------------
 # Installation Completion Card
 # ------------------------------------------------------------------------------
-local_ver="$("$BIN_DIR/bannix" -v 2>/dev/null || echo 'v0.1.4')"
+local_ver="$("$BIN_DIR/bannix" -v 2>/dev/null || echo 'v0.1.5')"
 local_ver="${local_ver#bannix }"
 echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════${NC}"
 echo -e "  ${GREEN}${BOLD}🎉  bannix INSTALLED & ACTIVATED SUCCESSFULLY!${NC}"

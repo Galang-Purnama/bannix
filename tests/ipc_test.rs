@@ -113,5 +113,18 @@ async fn test_ipc_commands_lifecycle() {
         .expect("send unknown");
     assert!(unk_resp.starts_with("ERROR: Unknown command"));
 
+    // 10. Test Socket Permissions (0o660)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&socket_path).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o660);
+    }
+
+    // 11. Test Oversized Command Rejection
+    let huge_cmd = format!("PING {}\n", "A".repeat(5000));
+    let huge_res = send_command(&socket_path, &huge_cmd).await;
+    assert!(huge_res.is_err() || huge_res.unwrap().contains("ERROR"));
+
     let _ = std::fs::remove_file(&socket_path);
 }

@@ -160,6 +160,78 @@ impl BanRegistry {
             }
         });
     }
+
+    pub fn default_state_path() -> std::path::PathBuf {
+        if std::path::Path::new("/var/lib/bannix").is_dir() {
+            std::path::PathBuf::from("/var/lib/bannix/bans.state")
+        } else if std::path::Path::new("/run/bannix").is_dir() {
+            std::path::PathBuf::from("/run/bannix/bans.state")
+        } else {
+            std::path::PathBuf::from("/tmp/bannix_bans.state")
+        }
+    }
+
+    pub fn save_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {
+        let now = Self::current_timestamp();
+        self.prune_expired(now);
+
+        let map = self.bans.read().unwrap();
+        let mut content = String::with_capacity(map.len() * 64);
+        for entry in map.values() {
+            let exp_str = match entry.expires_at {
+                Some(e) => e.to_string(),
+                None => "0".to_string(),
+            };
+            content.push_str(&format!(
+                "{} {} {} {} {}\n",
+                entry.ip, entry.jail, entry.banned_at, entry.duration_secs, exp_str
+            ));
+        }
+        drop(map);
+
+        let p = path.as_ref();
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = format!("{}.tmp.{}", p.display(), std::process::id());
+        std::fs::write(&tmp, content)?;
+        std::fs::rename(&tmp, p)?;
+        Ok(())
+    }
+
+    pub fn load_from_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<usize> {
+        let content = std::fs::read_to_string(path)?;
+        let mut map = self.bans.write().unwrap();
+        let mut loaded = 0;
+        let now = Self::current_timestamp();
+
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 {
+                continue;
+            }
+            if let Ok(ip) = parts[0].parse::<IpAddr>() {
+                let jail = parts[1].to_string();
+                let banned_at = parts[2].parse::<u64>().unwrap_or(now);
+                let duration_secs = parts[3].parse::<u64>().unwrap_or(3600);
+                let exp_num = parts[4].parse::<u64>().unwrap_or(0);
+                let expires_at = if exp_num > 0 { Some(exp_num) } else { None };
+
+                let entry = BanEntry {
+                    ip,
+                    jail,
+                    banned_at,
+                    duration_secs,
+                    expires_at,
+                };
+                if !entry.is_expired(now) {
+                    map.insert(ip, entry);
+                    loaded += 1;
+                }
+            }
+        }
+        Ok(loaded)
+    }
 }
 
 #[cfg(test)]
@@ -237,5 +309,38 @@ mod tests {
         registry.sync_with_kernel(&[]);
         assert_eq!(registry.total_active(), 2);
         assert!(registry.list_active(None).iter().all(|e| e.ip != ip_old));
+    }
+
+    #[test]
+    fn test_ban_registry_save_and_load_persistence() {
+        let registry = BanRegistry::new();
+        let ip1: IpAddr = "192.0.2.10".parse().unwrap();
+        let ip2: IpAddr = "2001:db8::20".parse().unwrap();
+        let now = BanRegistry::current_timestamp();
+
+        registry.record_ban_at(ip1, "ssh", 3600, now);
+        registry.record_ban_at(ip2, "nginx", 1800, now);
+
+        let state_path = format!("/tmp/bannix_test_state_{}.state", std::process::id());
+        let _ = std::fs::remove_file(&state_path);
+
+        assert!(registry.save_to_file(&state_path).is_ok());
+
+        let new_registry = BanRegistry::new();
+        let loaded = new_registry
+            .load_from_file(&state_path)
+            .expect("load state");
+        assert_eq!(loaded, 2);
+        assert_eq!(new_registry.count_for_jail("ssh"), 1);
+        assert_eq!(new_registry.count_for_jail("nginx"), 1);
+
+        let bans = new_registry.list_active(None);
+        assert_eq!(bans.len(), 2);
+        let e1 = bans.iter().find(|e| e.ip == ip1).unwrap();
+        assert_eq!(e1.jail, "ssh");
+        let e2 = bans.iter().find(|e| e.ip == ip2).unwrap();
+        assert_eq!(e2.jail, "nginx");
+
+        let _ = std::fs::remove_file(&state_path);
     }
 }

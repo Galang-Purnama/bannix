@@ -70,6 +70,14 @@ const NFTA_RULE_TABLE: u16 = 1;
 const NFTA_RULE_CHAIN: u16 = 2;
 const NFTA_RULE_EXPRESSIONS: u16 = 4;
 
+fn valid_nft_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
 pub struct NetlinkBackend {
     table_name: String,
     set_v4: String,
@@ -246,6 +254,24 @@ impl FirewallBackend for NetlinkBackend {
     }
 
     fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !valid_nft_identifier(&self.table_name) {
+            return Err("invalid nftables table name".into());
+        }
+        // Idempotent startup: remove only rules from bannix-owned input chain;
+        // retain blacklist sets so active timed bans survive process restarts.
+        let exists = std::process::Command::new("nft")
+            .args(["list", "chain", "inet", &self.table_name, &self.chain_name])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if exists {
+            let status = std::process::Command::new("nft")
+                .args(["flush", "chain", "inet", &self.table_name, &self.chain_name])
+                .status()?;
+            if !status.success() {
+                return Err("failed to flush bannix nftables chain".into());
+            }
+        }
         let mut msg_buf = Vec::new();
 
         // 1. Table: inet <table_name>

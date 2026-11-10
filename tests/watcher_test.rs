@@ -175,6 +175,30 @@ fn test_inotify_fragmented_partial_writes() {
 }
 
 #[test]
+fn test_inotify_discards_oversized_lines_without_merging_next_line() {
+    let test_dir = PathBuf::from(format!("/tmp/bannix_oversize_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).expect("create test dir");
+    let log_file = test_dir.join("auth.log");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_file)
+        .unwrap();
+    file.write_all(&vec![b'x'; 70 * 1024]).unwrap();
+    writeln!(file).unwrap();
+    writeln!(file, "Failed password from 192.0.2.44").unwrap();
+    drop(file);
+
+    let mut watcher = InotifyWatcher::new(&log_file, false).expect("init watcher");
+    let mut lines = Vec::new();
+    watcher.drain_file_to_eof(|line| lines.push(line.to_vec()));
+    assert_eq!(lines, vec![b"Failed password from 192.0.2.44".to_vec()]);
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[test]
 fn test_journal_watcher_unix_socket_stream() {
     let sock_path = PathBuf::from("/tmp/bannix_journal_mock.sock");
     let _ = fs::remove_file(&sock_path);
