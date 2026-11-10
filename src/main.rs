@@ -235,9 +235,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(n) = bans_arc.write().unwrap().load_from_file(&state_file) {
         if n > 0 {
             info!("Loaded {} active ban(s) from persistent state file", n);
+            if !dry_run {
+                let now = BanRegistry::current_timestamp();
+                let loaded = bans_arc.read().unwrap().list_active(None);
+                for ban in loaded {
+                    let remaining = ban.remaining_secs(now).unwrap_or(0);
+                    if let Err(e) = fw.ban_ip(ban.ip, remaining) {
+                        warn!("Failed to restore persistent ban for IP {} to firewall: {}", ban.ip, e);
+                    }
+                }
+            }
         }
     }
-    // Synchronize pre-existing kernel firewall bans
     if !dry_run {
         let kernel_bans = fw.list_banned();
         bans_arc.write().unwrap().sync_with_kernel(&kernel_bans);
@@ -470,19 +479,15 @@ async fn run_jail_worker(
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     } else {
-        let mut inotify = match InotifyWatcher::new(&jail.log_path, true) {
-            Ok(w) => w,
-            Err(e) => {
-                warn!(
-                    "Could not immediately open '{}' for jail '{}': {}. Will retry in background.",
-                    jail.log_path, name, e
-                );
-                match InotifyWatcher::new(&jail.log_path, true) {
-                    Ok(w) => w,
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        return;
-                    }
+        let mut inotify = loop {
+            match InotifyWatcher::new(&jail.log_path, true) {
+                Ok(w) => break w,
+                Err(e) => {
+                    warn!(
+                        "Could not open '{}' for jail '{}': {}. Retrying in 5 seconds...",
+                        jail.log_path, name, e
+                    );
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         };

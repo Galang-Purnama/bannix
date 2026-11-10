@@ -119,24 +119,24 @@ impl BanRegistry {
         map.values().filter(|e| !e.is_expired(now)).count()
     }
 
-    /// Synchronizes in-memory registry with kernel firewall active bans.
-    /// Preserves jail labels for known bans and adopts unknown kernel bans.
-    pub fn sync_with_kernel(&self, kernel_bans: &[(IpAddr, Option<u64>)]) {
+    pub fn sync_with_kernel(&self, kernel_bans: &[(IpAddr, Option<u64>)]) -> bool {
         let now = Self::current_timestamp();
         let mut map = self.bans.write().unwrap();
+        let initial_len = map.len();
+        let mut modified = false;
 
-        // Build quick lookup of active kernel IPs
         let kernel_map: HashMap<IpAddr, Option<u64>> = kernel_bans.iter().copied().collect();
 
-        // Update remaining time or mark unknown kernel elements
         for (ip, remaining) in &kernel_map {
             if let Some(entry) = map.get_mut(ip) {
-                // If kernel reports exact remaining seconds, sync expires_at
                 if let Some(rem) = remaining {
-                    entry.expires_at = Some(now.saturating_add(*rem));
+                    let new_exp = now.saturating_add(*rem);
+                    if entry.expires_at != Some(new_exp) {
+                        entry.expires_at = Some(new_exp);
+                        modified = true;
+                    }
                 }
             } else {
-                // Pre-existing kernel ban not yet in registry (e.g. from prior daemon run)
                 let duration = remaining.unwrap_or(3600);
                 let expires_at = remaining.map(|r| now.saturating_add(r));
                 map.insert(
@@ -149,6 +149,7 @@ impl BanRegistry {
                         expires_at,
                     },
                 );
+                modified = true;
             }
         }
 
@@ -159,6 +160,12 @@ impl BanRegistry {
                 now.saturating_sub(entry.banned_at) < 2
             }
         });
+
+        if map.len() != initial_len {
+            modified = true;
+        }
+
+        modified
     }
 
     pub fn default_state_path() -> std::path::PathBuf {
@@ -342,5 +349,26 @@ mod tests {
         assert_eq!(e2.jail, "nginx");
 
         let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[test]
+    fn test_sync_with_kernel_change_detection() {
+        let registry = BanRegistry::new();
+        let ip: IpAddr = "192.0.2.77".parse().unwrap();
+        let now = BanRegistry::current_timestamp();
+
+        registry.record_ban_at(ip, "ssh", 3600, now);
+        let bans = vec![(ip, Some(3600))];
+
+        let changed1 = registry.sync_with_kernel(&bans);
+        assert!(!changed1);
+
+        let ip_new: IpAddr = "192.0.2.88".parse().unwrap();
+        let bans_with_new = vec![(ip, Some(3600)), (ip_new, Some(1800))];
+        let changed2 = registry.sync_with_kernel(&bans_with_new);
+        assert!(changed2);
+
+        let changed3 = registry.sync_with_kernel(&bans_with_new);
+        assert!(!changed3);
     }
 }
