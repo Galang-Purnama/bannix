@@ -168,7 +168,11 @@ impl FirewallBackend for IpsetBackend {
     fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut create_payload_v4 = Vec::new();
         create_payload_v4.push(IPSET_PROTOCOL);
-        Self::append_nla(&mut create_payload_v4, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla(
+            &mut create_payload_v4,
+            IPSET_ATTR_PROTOCOL,
+            &[IPSET_PROTOCOL],
+        );
         Self::append_nla_str(&mut create_payload_v4, IPSET_ATTR_SETNAME, &self.set_v4);
         Self::append_nla_str(&mut create_payload_v4, IPSET_ATTR_TYPENAME, "hash:ip");
         Self::append_nla(&mut create_payload_v4, IPSET_ATTR_REVISION, &[1]);
@@ -182,7 +186,11 @@ impl FirewallBackend for IpsetBackend {
 
         let mut create_payload_v6 = Vec::new();
         create_payload_v6.push(IPSET_PROTOCOL);
-        Self::append_nla(&mut create_payload_v6, IPSET_ATTR_PROTOCOL, &[IPSET_PROTOCOL]);
+        Self::append_nla(
+            &mut create_payload_v6,
+            IPSET_ATTR_PROTOCOL,
+            &[IPSET_PROTOCOL],
+        );
         Self::append_nla_str(&mut create_payload_v6, IPSET_ATTR_SETNAME, &self.set_v6);
         Self::append_nla_str(&mut create_payload_v6, IPSET_ATTR_TYPENAME, "hash:ip");
         Self::append_nla(&mut create_payload_v6, IPSET_ATTR_REVISION, &[1]);
