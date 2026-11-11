@@ -934,7 +934,7 @@ step_end
 # ------------------------------------------------------------------------------
 # Installation Completion Card
 # ------------------------------------------------------------------------------
-local_ver="$("$BIN_DIR/bannix" -v 2>/dev/null || echo 'v0.1.5')"
+local_ver="$("$BIN_DIR/bannix" -v 2>/dev/null || echo 'v0.1.6')"
 local_ver="${local_ver#bannix }"
 echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════${NC}"
 echo -e "  ${GREEN}${BOLD}🎉  bannix INSTALLED & ACTIVATED SUCCESSFULLY!${NC}"

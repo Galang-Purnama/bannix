@@ -232,17 +232,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bans_arc = Arc::new(RwLock::new(BanRegistry::new()));
     let state_file = BanRegistry::default_state_path();
-    if let Ok(n) = bans_arc.write().unwrap().load_from_file(&state_file) {
-        if n > 0 {
-            info!("Loaded {} active ban(s) from persistent state file", n);
-            if !dry_run {
-                let now = BanRegistry::current_timestamp();
-                let loaded = bans_arc.read().unwrap().list_active(None);
-                for ban in loaded {
-                    let remaining = ban.remaining_secs(now).unwrap_or(0);
-                    if let Err(e) = fw.ban_ip(ban.ip, remaining) {
-                        warn!("Failed to restore persistent ban for IP {} to firewall: {}", ban.ip, e);
-                    }
+    let loaded_count = bans_arc
+        .write()
+        .unwrap()
+        .load_from_file(&state_file)
+        .unwrap_or(0);
+    if loaded_count > 0 {
+        info!(
+            "Loaded {} active ban(s) from persistent state file",
+            loaded_count
+        );
+        if !dry_run {
+            let now = BanRegistry::current_timestamp();
+            let loaded = bans_arc.read().unwrap().list_active(None);
+            for ban in loaded {
+                let remaining = ban.remaining_secs(now).unwrap_or(0);
+                if let Err(e) = fw.ban_ip(ban.ip, remaining) {
+                    warn!(
+                        "Failed to restore persistent ban for IP {} to firewall: {}",
+                        ban.ip, e
+                    );
                 }
             }
         }
