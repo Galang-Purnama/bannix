@@ -308,15 +308,16 @@ fn format_status(
     bans: &Arc<RwLock<BanRegistry>>,
     start_time: Instant,
 ) -> String {
-    // 1. Sync with kernel firewall first so live counts are accurate
     {
         let fw_lock = fw.lock().unwrap();
         let kernel_bans = fw_lock.list_banned();
-        bans.write().unwrap().sync_with_kernel(&kernel_bans);
-        let _ = bans
-            .read()
-            .unwrap()
-            .save_to_file(BanRegistry::default_state_path());
+        let changed = bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        if changed {
+            let _ = bans
+                .read()
+                .unwrap()
+                .save_to_file(BanRegistry::default_state_path());
+        }
     }
 
     let cfg_read = cfg.read().unwrap();
@@ -364,11 +365,13 @@ fn format_list_jails(
     {
         let fw_lock = fw.lock().unwrap();
         let kernel_bans = fw_lock.list_banned();
-        bans.write().unwrap().sync_with_kernel(&kernel_bans);
-        let _ = bans
-            .read()
-            .unwrap()
-            .save_to_file(BanRegistry::default_state_path());
+        let changed = bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        if changed {
+            let _ = bans
+                .read()
+                .unwrap()
+                .save_to_file(BanRegistry::default_state_path());
+        }
     }
 
     let cfg_read = cfg.read().unwrap();
@@ -540,11 +543,13 @@ fn format_banned_ips(
     {
         let fw_lock = fw.lock().unwrap();
         let kernel_bans = fw_lock.list_banned();
-        bans.write().unwrap().sync_with_kernel(&kernel_bans);
-        let _ = bans
-            .read()
-            .unwrap()
-            .save_to_file(BanRegistry::default_state_path());
+        let changed = bans.write().unwrap().sync_with_kernel(&kernel_bans);
+        if changed {
+            let _ = bans
+                .read()
+                .unwrap()
+                .save_to_file(BanRegistry::default_state_path());
+        }
     }
 
     let active_bans = bans.read().unwrap().list_active(jail_filter);
